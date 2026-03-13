@@ -1,3 +1,4 @@
+pub mod checker;
 pub mod codegen;
 pub mod diagnostic;
 pub mod lexer;
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
+use checker::Checker;
 use codegen::Codegen;
 use parser::Parser as ZsParser;
 
@@ -102,6 +104,17 @@ fn compile_file(file: &Path, out_dir: Option<&Path>) -> Result<PathBuf> {
         anyhow::anyhow!("{rendered}")
     })?;
 
+    // Type check
+    let check_diags = Checker::new().check(&program);
+    let type_errors: Vec<_> = check_diags
+        .iter()
+        .filter(|d| d.severity == diagnostic::Severity::Error)
+        .collect();
+    if !type_errors.is_empty() {
+        let rendered = diagnostic::render_diagnostics(&filename, &source, &check_diags);
+        return Err(anyhow::anyhow!("{rendered}"));
+    }
+
     let output = Codegen::new().generate(&program);
     let ext = if output.has_jsx { "tsx" } else { "ts" };
 
@@ -136,8 +149,19 @@ fn cmd_check(path: &Path) -> Result<()> {
 
         let filename = file.to_string_lossy();
         match ZsParser::new(&source).parse_program() {
-            Ok(_) => {
-                checked += 1;
+            Ok(program) => {
+                let check_diags = Checker::new().check(&program);
+                let type_errors: Vec<_> = check_diags
+                    .iter()
+                    .filter(|d| d.severity == diagnostic::Severity::Error)
+                    .collect();
+                if type_errors.is_empty() {
+                    checked += 1;
+                } else {
+                    let rendered = diagnostic::render_diagnostics(&filename, &source, &check_diags);
+                    eprint!("{rendered}");
+                    errors += 1;
+                }
             }
             Err(errs) => {
                 let diags = diagnostic::from_parse_errors(&errs);
