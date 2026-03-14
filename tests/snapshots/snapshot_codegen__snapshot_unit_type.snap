@@ -1,0 +1,13 @@
+---
+source: tests/snapshot_codegen.rs
+expression: output
+---
+function log(msg: string): void {
+  console.log(msg);
+}
+
+function deleteUser(id: string): { ok: true; value: void } | { ok: false; error: string } {
+  { ok: true as const, value: undefined };
+}
+
+type ButtonProps = { onClick: () => void };

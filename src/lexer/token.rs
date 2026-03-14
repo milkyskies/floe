@@ -160,6 +160,7 @@ pub enum BannedKeyword {
     Any,
     As,
     Enum,
+    Void,
 }
 
 impl BannedKeyword {
@@ -175,6 +176,7 @@ impl BannedKeyword {
             Self::Any => "Use a concrete type, generic, or `unknown` with narrowing",
             Self::As => "Use a type guard or `match` expression instead of type assertions",
             Self::Enum => "Use `type` with `|` variants instead of enum",
+            Self::Void => "Use the unit type `()` instead of `void`",
         }
     }
 
@@ -189,6 +191,7 @@ impl BannedKeyword {
             Self::Any => "any",
             Self::As => "as",
             Self::Enum => "enum",
+            Self::Void => "void",
         }
     }
 }
@@ -228,6 +231,7 @@ pub fn lookup_keyword(word: &str) -> Option<TokenKind> {
         "any" => Some(TokenKind::Banned(BannedKeyword::Any)),
         "as" => Some(TokenKind::Banned(BannedKeyword::As)),
         "enum" => Some(TokenKind::Banned(BannedKeyword::Enum)),
+        "void" => Some(TokenKind::Banned(BannedKeyword::Void)),
 
         _ => Option::None,
     }
