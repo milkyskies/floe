@@ -1753,6 +1753,9 @@ impl Parser {
 
             // Template literals in JSX text — skip
             TokenKind::TemplateLiteral(_) => None,
+
+            // Trivia tokens — skip (shouldn't appear in normal token stream)
+            TokenKind::Whitespace | TokenKind::Comment | TokenKind::BlockComment => None,
         }
     }
 
