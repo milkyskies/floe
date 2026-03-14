@@ -1,0 +1,22 @@
+{
+  "name": "vite-plugin-zenscript",
+  "version": "0.1.0",
+  "description": "Vite plugin for ZenScript - compile .zs files to TypeScript",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["vite", "vite-plugin", "zenscript"],
+  "license": "MIT",
+  "peerDependencies": {
+    "vite": "^5.0.0 || ^6.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vite": "^6.0.0"
+  }
+}
