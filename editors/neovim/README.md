@@ -91,11 +91,6 @@ cp -r editors/neovim/queries/floe ~/.config/nvim/queries/floe
 
 This copies `queries/floe/highlights.scm` which tells tree-sitter how to map AST nodes to highlight groups.
 
-#### Option B: Vim syntax file (fallback)
-
-If you prefer not to use tree-sitter, copy `syntax/floe.vim` into
-`~/.config/nvim/syntax/floe.vim` for basic regex-based highlighting.
-
 ## Features
 
 Once configured, you get:
