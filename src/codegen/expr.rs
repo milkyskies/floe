@@ -379,16 +379,15 @@ impl Codegen {
             }
 
             // Resolve stdlib module from the left-hand type
-            let stdlib_fn = if let Some(left_type) =
-                self.expr_types.get(&(left.span.start, left.span.end))
-                && let Some(module) = Self::type_to_stdlib_module(left_type)
-            {
-                // Type-directed: use the left's type to pick the right module
-                self.stdlib.lookup(module, name)
-            } else {
-                // Fallback: no type info or unknown type, pick first match
-                self.stdlib.lookup_by_name(name).into_iter().next()
-            }?;
+            let stdlib_fn =
+                if let Some(left_type) = self.expr_types.get(&(left.span.start, left.span.end)) {
+                    // Type-directed: use the left's type to pick the right module
+                    let module = Self::type_to_stdlib_module(left_type)?;
+                    self.stdlib.lookup(module, name)
+                } else {
+                    // Fallback: no type info, pick first match
+                    self.stdlib.lookup_by_name(name).into_iter().next()
+                }?;
 
             let template = stdlib_fn.codegen.to_string();
             if template.contains("__zenEq") {
