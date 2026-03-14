@@ -1,2 +1,6 @@
-const addTen = add(10, _)
-const items = [1, 2, 3] |> map(multiply(_, 2))
+function add(a: number, b: number): number { a + b }
+function multiply(a: number, b: number): number { a * b }
+function map(arr: Array<number>, f: (number) => number): Array<number> { arr }
+
+const _addTen = add(10, _)
+const _items = [1, 2, 3] |> map(multiply(_, 2))

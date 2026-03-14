@@ -56,8 +56,6 @@ pub enum Type {
     Unknown,
     /// Void (no return value)
     Void,
-    /// JSX element type
-    JsxElement,
 }
 
 impl Type {
@@ -109,7 +107,6 @@ impl Type {
             Type::Var(id) => format!("?T{id}"),
             Type::Unknown => "unknown".to_string(),
             Type::Void => "void".to_string(),
-            Type::JsxElement => "JSX.Element".to_string(),
         }
     }
 }
@@ -348,6 +345,10 @@ impl Checker {
     }
 
     fn resolve_named_type(&mut self, name: &str, type_args: &[TypeExpr]) -> Type {
+        // Mark type names as used (e.g. "JSX" from "JSX.Element", or "User")
+        let root = name.split('.').next().unwrap_or(name);
+        self.used_names.insert(root.to_string());
+
         match name {
             "number" => Type::Number,
             "string" => Type::String,
@@ -467,6 +468,9 @@ impl Checker {
         match &decl.binding {
             ConstBinding::Name(name) => {
                 self.env.define(name, final_type);
+                if decl.exported {
+                    self.used_names.insert(name.clone());
+                }
                 self.defined_names.push((name.clone(), span));
             }
             ConstBinding::Array(names) => {
@@ -524,6 +528,9 @@ impl Checker {
             return_type: Box::new(return_type.clone()),
         };
         self.env.define(&decl.name, fn_type);
+        if decl.exported {
+            self.used_names.insert(decl.name.clone());
+        }
         self.defined_names.push((decl.name.clone(), span));
 
         // Set up scope for function body
@@ -835,9 +842,10 @@ impl Checker {
 
             ExprKind::Return(value) => {
                 if let Some(e) = value {
-                    self.check_expr(e);
+                    self.check_expr(e)
+                } else {
+                    Type::Void
                 }
-                Type::Void
             }
 
             ExprKind::Await(inner) => self.check_expr(inner),
@@ -867,7 +875,7 @@ impl Checker {
 
             ExprKind::Jsx(element) => {
                 self.check_jsx(element);
-                Type::JsxElement
+                Type::Named("JSX.Element".to_string())
             }
 
             ExprKind::Block(items) => {
@@ -885,13 +893,23 @@ impl Checker {
                         );
                         break;
                     }
-                    self.check_item(item);
-                    if let ItemKind::Expr(expr) = &item.kind {
-                        if matches!(expr.kind, ExprKind::Return(_)) {
-                            found_return = true;
-                        }
-                        if i == items.len() - 1 {
+                    let is_last = i == items.len() - 1;
+                    if is_last {
+                        if let ItemKind::Expr(expr) = &item.kind {
+                            if matches!(expr.kind, ExprKind::Return(_)) {
+                                found_return = true;
+                            }
+                            // Check last expression once and use its type as block type
                             last_type = self.check_expr(expr);
+                        } else {
+                            self.check_item(item);
+                        }
+                    } else {
+                        self.check_item(item);
+                        if let ItemKind::Expr(expr) = &item.kind
+                            && matches!(expr.kind, ExprKind::Return(_))
+                        {
+                            found_return = true;
                         }
                     }
                 }
@@ -1246,8 +1264,7 @@ impl Checker {
             | (Type::String, Type::String)
             | (Type::Bool, Type::Bool)
             | (Type::Void, Type::Void)
-            | (Type::Undefined, Type::Undefined)
-            | (Type::JsxElement, Type::JsxElement) => true,
+            | (Type::Undefined, Type::Undefined) => true,
             (Type::Named(a), Type::Named(b)) => a == b,
             (Type::Brand { tag: a, .. }, Type::Brand { tag: b, .. }) => a == b,
             (Type::Result { ok: o1, err: e1 }, Type::Result { ok: o2, err: e2 }) => {
