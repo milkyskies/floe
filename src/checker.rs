@@ -787,15 +787,13 @@ impl Checker {
                             {
                                 self.diagnostics.push(
                                     Diagnostic::warning(
-                                        format!(
-                                            "field `{label}` from spread is overwritten"
-                                        ),
+                                        format!("field `{label}` from spread is overwritten"),
                                         expr.span,
                                     )
-                                    .with_label(format!(
-                                        "`{label}` exists in the spread source"
-                                    ))
-                                    .with_help("The spread value will be replaced by the explicit field")
+                                    .with_label(format!("`{label}` exists in the spread source"))
+                                    .with_help(
+                                        "The spread value will be replaced by the explicit field",
+                                    )
                                     .with_code("W003"),
                                 );
                             }
