@@ -261,6 +261,15 @@ pub enum ExprKind {
     // -- Spread --
     /// Spread: `...expr`
     Spread(Box<Expr>),
+
+    // -- Dot shorthand --
+    /// Dot shorthand: `.field` or `.field op expr` — creates an implicit lambda
+    DotShorthand {
+        /// The field name (e.g., `done` in `.done`)
+        field: String,
+        /// Optional operator and right-hand side (e.g., `== false` in `.done == false`)
+        predicate: Option<(BinOp, Box<Expr>)>,
+    },
 }
 
 /// Template literal parts for the AST.

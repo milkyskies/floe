@@ -1,0 +1,5 @@
+const names = todos |> Array.map(.text)
+const active = todos |> Array.filter(.done == false)
+const byName = users |> Array.sortBy(.name)
+const found = items |> Array.filter(.id != id)
+const big = items |> Array.filter(.size > 100)

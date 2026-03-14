@@ -305,7 +305,7 @@ fn cmd_watch(path: &Path, out_dir: Option<&Path>) -> Result<()> {
             && (event.kind.is_modify() || event.kind.is_create())
         {
             for p in &event.paths {
-                if p.extension().is_some_and(|ext| ext == "zs") {
+                if p.extension().is_some_and(|ext| ext == "fl") {
                     let _ = tx.send(p.clone());
                 }
             }
@@ -397,7 +397,7 @@ export function App() {
 
 fn discover_fl_files(path: &Path) -> Result<Vec<PathBuf>> {
     if path.is_file() {
-        if path.extension().is_some_and(|ext| ext == "zs") {
+        if path.extension().is_some_and(|ext| ext == "fl") {
             return Ok(vec![path.to_path_buf()]);
         }
         bail!("{} is not a .fl file", path.display());
@@ -425,7 +425,7 @@ fn collect_fl_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
                 continue;
             }
             collect_fl_files(&path, files)?;
-        } else if path.extension().is_some_and(|ext| ext == "zs") {
+        } else if path.extension().is_some_and(|ext| ext == "fl") {
             files.push(path);
         }
     }

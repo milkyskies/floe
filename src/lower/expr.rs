@@ -363,6 +363,23 @@ impl<'src> Lowerer<'src> {
                 })
             }
 
+            SyntaxKind::DOT_SHORTHAND => {
+                let idents = self.collect_idents_direct(node);
+                let field = idents.first()?.clone();
+
+                // Check for binary op and RHS expression
+                let predicate = self.find_binary_op(node).and_then(|op| {
+                    // Find the RHS expression (child node or token after the operator)
+                    let rhs = self.lower_first_expr(node)?;
+                    Some((op, Box::new(rhs)))
+                });
+
+                Some(Expr {
+                    span,
+                    kind: ExprKind::DotShorthand { field, predicate },
+                })
+            }
+
             SyntaxKind::ERROR => None,
 
             // For other kinds, try to extract token-level expressions
