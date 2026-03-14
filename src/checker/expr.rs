@@ -66,8 +66,10 @@ impl Checker {
             }
 
             ExprKind::Pipe { left, right } => {
-                let _left_ty = self.check_expr(left);
-                self.check_expr(right)
+                let left_ty = self.check_expr(left);
+                // Type-directed resolution: for bare function names in pipes,
+                // check stdlib before reporting "not defined"
+                self.check_pipe_right(&left_ty, right)
             }
 
             ExprKind::Unwrap(inner) => {
@@ -531,6 +533,74 @@ impl Checker {
                 }
             }
             BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => Type::Number,
+        }
+    }
+
+    /// Check the right side of a pipe expression with type-directed resolution.
+    /// When the right side uses a bare function name (not locally defined),
+    /// resolve it against stdlib using the left side's type.
+    fn check_pipe_right(&mut self, left_ty: &Type, right: &Expr) -> Type {
+        // Extract the bare function name from the right side
+        let bare_name = match &right.kind {
+            ExprKind::Identifier(name) => Some(name.as_str()),
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Identifier(name) => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        // If it's a bare name not in scope, try stdlib resolution
+        if let Some(name) = bare_name
+            && self.env.lookup(name).is_none()
+            && !self.stdlib.is_module(name)
+        {
+            let module = Self::type_to_stdlib_module(left_ty);
+            let fallback_matches = self.stdlib.lookup_by_name(name);
+
+            if let Some(m) = module
+                && self.stdlib.lookup(m, name).is_some()
+            {
+                // Found via type-directed resolution — mark as used, check args
+                self.used_names.insert(name.to_string());
+                let stdlib_fn = self.stdlib.lookup(m, name).unwrap();
+                let ret = stdlib_fn.return_type.clone();
+                self.check_pipe_right_args(right);
+                return ret;
+            } else if !fallback_matches.is_empty() {
+                // Found via name-based fallback (unknown left type)
+                self.used_names.insert(name.to_string());
+                let ret = fallback_matches[0].return_type.clone();
+                self.check_pipe_right_args(right);
+                return ret;
+            }
+        }
+
+        // Default: check normally
+        self.check_expr(right)
+    }
+
+    /// Check arguments in the right side of a pipe without checking the callee identifier.
+    fn check_pipe_right_args(&mut self, right: &Expr) {
+        if let ExprKind::Call { args, .. } = &right.kind {
+            for arg in args {
+                match arg {
+                    Arg::Positional(e) | Arg::Named { value: e, .. } => {
+                        self.check_expr(e);
+                    }
+                }
+            }
+        }
+    }
+
+    fn type_to_stdlib_module(ty: &Type) -> Option<&'static str> {
+        match ty {
+            Type::Array(_) => Some("Array"),
+            Type::String => Some("String"),
+            Type::Number => Some("Number"),
+            Type::Option(_) => Some("Option"),
+            Type::Result { .. } => Some("Result"),
+            _ => None,
         }
     }
 }
