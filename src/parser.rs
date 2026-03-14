@@ -144,6 +144,10 @@ impl Parser {
                 decl.exported = exported;
                 ItemKind::TypeDecl(decl)
             }
+            TokenKind::For if !exported => {
+                let block = self.parse_for_block()?;
+                ItemKind::ForBlock(block)
+            }
             TokenKind::Async if self.peek_kind() == Some(&TokenKind::Fn) => {
                 let mut decl = self.parse_function_decl()?;
                 decl.exported = exported;
@@ -186,7 +190,10 @@ impl Parser {
             Vec::new()
         };
 
-        self.expect(&TokenKind::From)?;
+        // `from` is required when there are specifiers, optional for bare imports
+        if self.check(&TokenKind::From) {
+            self.advance();
+        }
         let source = self.expect_string()?;
 
         Ok(ImportDecl {
@@ -472,6 +479,100 @@ impl Parser {
         })
     }
 
+    // ── For Blocks ───────────────────────────────────────────────
+
+    fn parse_for_block(&mut self) -> Result<ForBlock, ParseError> {
+        let start_span = self.current_span();
+        self.expect(&TokenKind::For)?;
+
+        let type_name = self.parse_type_expr()?;
+
+        self.expect(&TokenKind::LeftBrace)?;
+
+        let mut functions = Vec::new();
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            // Allow `export` prefix on for-block functions
+            let exported = self.check(&TokenKind::Export);
+            if exported {
+                self.advance();
+            }
+
+            if self.check(&TokenKind::Fn) || self.check(&TokenKind::Async) {
+                let mut decl = self.parse_for_block_function()?;
+                decl.exported = exported;
+                functions.push(decl);
+            } else {
+                return Err(self.error("expected `fn` inside for block"));
+            }
+        }
+
+        self.expect(&TokenKind::RightBrace)?;
+        let end_span = self.previous_span();
+
+        Ok(ForBlock {
+            type_name,
+            functions,
+            span: self.merge_spans(start_span, end_span),
+        })
+    }
+
+    /// Parse a function declaration inside a `for` block.
+    /// `self` parameters get their type inferred from the `for` block's type.
+    fn parse_for_block_function(&mut self) -> Result<FunctionDecl, ParseError> {
+        let async_fn = if self.check(&TokenKind::Async) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        self.expect(&TokenKind::Fn)?;
+        let name = self.expect_identifier()?;
+
+        self.expect(&TokenKind::LeftParen)?;
+        let params = self.parse_comma_separated(|p| p.parse_for_block_param())?;
+        self.expect(&TokenKind::RightParen)?;
+
+        let return_type = if self.check(&TokenKind::ThinArrow) {
+            self.advance();
+            Some(self.parse_type_expr()?)
+        } else {
+            Option::None
+        };
+
+        let body = self.parse_block_expr()?;
+
+        Ok(FunctionDecl {
+            exported: false,
+            async_fn,
+            name,
+            params,
+            return_type,
+            body: Box::new(body),
+        })
+    }
+
+    /// Parse a parameter inside a `for` block function.
+    /// Handles `self` as a special parameter name (no type annotation needed).
+    fn parse_for_block_param(&mut self) -> Result<Param, ParseError> {
+        let start_span = self.current_span();
+
+        // Handle `self` keyword as parameter
+        if self.check(&TokenKind::SelfKw) {
+            self.advance();
+            let end_span = self.previous_span();
+            return Ok(Param {
+                name: "self".to_string(),
+                type_ann: Option::None, // type inferred from for block
+                default: Option::None,
+                span: self.merge_spans(start_span, end_span),
+            });
+        }
+
+        // Regular parameter
+        self.parse_param()
+    }
+
     // ── Type Expressions ─────────────────────────────────────────
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
@@ -588,6 +689,35 @@ impl Parser {
                     }
                 }
                 TokenKind::Eof => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// Heuristic: is the current `<` the start of generic type arguments in a call?
+    /// Look ahead for `< types > (` pattern. Handles nesting.
+    fn is_generic_call(&self) -> bool {
+        let mut depth = 0;
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            match &self.tokens[i].kind {
+                TokenKind::LessThan => depth += 1,
+                TokenKind::GreaterThan => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // Must be followed by `(`
+                        return i + 1 < self.tokens.len()
+                            && self.tokens[i + 1].kind == TokenKind::LeftParen;
+                    }
+                }
+                // If we see something that can't be in a type, bail
+                TokenKind::LeftBrace
+                | TokenKind::RightBrace
+                | TokenKind::Semicolon
+                | TokenKind::Equal
+                | TokenKind::Eof => return false,
                 _ => {}
             }
             i += 1;
@@ -779,6 +909,7 @@ impl Parser {
                 | TokenKind::Import
                 | TokenKind::Type
                 | TokenKind::Opaque
+                | TokenKind::For
                 | TokenKind::Return => return,
                 _ => {
                     self.advance();

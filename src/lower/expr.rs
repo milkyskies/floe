@@ -126,10 +126,20 @@ impl<'src> Lowerer<'src> {
                 }
 
                 let callee = child_exprs.into_iter().next()?;
+
+                // Collect type arguments from TYPE_EXPR children that appear
+                // between the callee and the args (for generic calls like f<T>(x))
+                let type_args: Vec<TypeExpr> = node
+                    .children()
+                    .filter(|c| c.kind() == SyntaxKind::TYPE_EXPR)
+                    .filter_map(|c| self.lower_type_expr(&c))
+                    .collect();
+
                 Some(Expr {
                     span,
                     kind: ExprKind::Call {
                         callee: Box::new(callee),
+                        type_args,
                         args,
                     },
                 })
@@ -531,6 +541,10 @@ impl<'src> Lowerer<'src> {
             }),
             SyntaxKind::KW_NONE => Some(Expr {
                 kind: ExprKind::None,
+                span,
+            }),
+            SyntaxKind::KW_SELF => Some(Expr {
+                kind: ExprKind::Identifier("self".to_string()),
                 span,
             }),
             _ => None,

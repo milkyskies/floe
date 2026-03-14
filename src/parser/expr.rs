@@ -273,6 +273,29 @@ impl Parser {
                         span,
                     };
                 }
+                // Generic call: `f<T>(args)` — type arguments before call
+                TokenKind::LessThan
+                    if matches!(
+                        &expr.kind,
+                        ExprKind::Identifier(_) | ExprKind::Member { .. }
+                    ) && self.is_generic_call() =>
+                {
+                    self.advance(); // consume `<`
+                    let type_args = self.parse_comma_separated(|p| p.parse_type_expr())?;
+                    self.expect(&TokenKind::GreaterThan)?;
+                    self.expect(&TokenKind::LeftParen)?;
+                    let args = self.parse_call_args()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    let span = self.merge_spans(expr.span, self.previous_span());
+                    expr = Expr {
+                        kind: ExprKind::Call {
+                            callee: Box::new(expr),
+                            type_args,
+                            args,
+                        },
+                        span,
+                    };
+                }
                 // Call: `expr(args)` — but only for lowercase identifiers or member exprs
                 // Uppercase identifiers with `(` are constructors, handled in primary
                 TokenKind::LeftParen => {
@@ -290,6 +313,7 @@ impl Parser {
                     expr = Expr {
                         kind: ExprKind::Call {
                             callee: Box::new(expr),
+                            type_args: Vec::new(),
                             args,
                         },
                         span,
@@ -556,6 +580,15 @@ impl Parser {
                 self.advance();
                 Ok(Expr {
                     kind: ExprKind::Identifier(name),
+                    span: start_span,
+                })
+            }
+
+            // `self` keyword — treat as identifier in expression context
+            TokenKind::SelfKw => {
+                self.advance();
+                Ok(Expr {
+                    kind: ExprKind::Identifier("self".to_string()),
                     span: start_span,
                 })
             }

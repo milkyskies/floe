@@ -277,6 +277,93 @@ fn floating_result_error() {
     assert!(has_error_containing(&diags, "unhandled Result"));
 }
 
+// ── For Blocks ─────────────────────────────────────────────
+
+#[test]
+fn for_block_registers_function() {
+    let diags = check(
+        r#"
+type User = { name: string }
+for User {
+    fn display(self) -> string { self.name }
+}
+const _x = display(User(name: "Ryan"))
+"#,
+    );
+    // display should be defined and callable
+    assert!(!has_error_containing(&diags, "not defined"));
+}
+
+#[test]
+fn for_block_self_gets_type() {
+    let diags = check(
+        r#"
+type User = { name: string }
+for User {
+    fn getName(self) -> string { self.name }
+}
+"#,
+    );
+    // self.name should resolve since self is typed as User
+    assert!(!has_error_containing(&diags, "not defined"));
+}
+
+#[test]
+fn for_block_multiple_params() {
+    let diags = check(
+        r#"
+type User = { name: string }
+for User {
+    fn greet(self, greeting: string) -> string { greeting }
+}
+const _x = greet(User(name: "Ryan"), "Hello")
+"#,
+    );
+    assert!(!has_error_containing(&diags, "not defined"));
+}
+
+#[test]
+fn call_site_type_args_infer_return() {
+    let (diags, types) = {
+        let program = crate::parser::Parser::new(
+            r#"
+import { useState } from "react"
+type Todo = { text: string }
+const [todos, setTodos] = useState<Array<Todo>>([])
+const _x = todos
+"#,
+        )
+        .parse_program()
+        .expect("should parse");
+        Checker::new().check_with_types(&program)
+    };
+    // todos should be Array<Todo>, not Unknown
+    assert!(
+        !has_error_containing(&diags, "not defined"),
+        "unexpected errors: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    // Check that todos has Array type via the name map
+    if let Some(ty) = types.get("todos") {
+        assert!(ty.contains("Array"), "expected Array type, got: {ty}");
+    }
+}
+
+#[test]
+fn for_block_with_pipe() {
+    let diags = check(
+        r#"
+type User = { name: string }
+for User {
+    fn display(self) -> string { self.name }
+}
+const _user = User(name: "Ryan")
+const _x = _user |> display
+"#,
+    );
+    assert!(!has_error_containing(&diags, "not defined"));
+}
+
 // ── Untrusted Import Enforcement ─────────────────────────────
 
 #[test]
@@ -502,7 +589,7 @@ fn builtin_types_no_error() {
         r#"
 const _a: number = 42
 const _b: string = "hi"
-const _c: bool = true
+const _c: boolean = true
 "#,
     );
     assert!(!has_error_containing(&diags, "unknown type"));

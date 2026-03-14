@@ -1,0 +1,32 @@
+import { Todo, Filter, Validation } from "./types"
+
+for string {
+    export fn validate(self) -> Validation {
+        const trimmed = self |> trim
+        const len = trimmed |> String.length
+        match len {
+            0 -> Empty,
+            1 -> TooShort,
+            _ -> match len > 100 {
+                true -> TooLong,
+                false -> Valid(trimmed),
+            },
+        }
+    }
+}
+
+for Array<Todo> {
+    export fn filterBy(self, f: Filter) -> Array<Todo> {
+        match f {
+            All -> self,
+            Active -> self |> filter(.done == false),
+            Completed -> self |> filter(.done == true),
+        }
+    }
+
+    export fn remaining(self) -> number {
+        self
+            |> filter(.done == false)
+            |> length
+    }
+}

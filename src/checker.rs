@@ -8,9 +8,13 @@ pub use types::Type;
 
 use std::collections::{HashMap, HashSet};
 
+/// Maps expression spans (start, end) to their resolved types.
+pub type ExprTypeMap = HashMap<(usize, usize), Type>;
+
 use crate::diagnostic::Diagnostic;
 use crate::lexer::span::Span;
 use crate::parser::ast::*;
+use crate::resolve::ResolvedImports;
 use crate::stdlib::StdlibRegistry;
 use types::{TypeEnv, TypeInfo};
 
@@ -31,12 +35,17 @@ pub struct Checker {
     imported_names: Vec<(String, Span)>,
     /// Standard library function registry.
     stdlib: StdlibRegistry,
+    /// Maps expression spans (start, end) to their resolved types.
+    /// Used by codegen for type-directed pipe resolution.
+    expr_types: ExprTypeMap,
     /// Names of untrusted (external TS) imports that require `try`.
     untrusted_imports: HashSet<String>,
     /// Whether we are currently inside a `try` expression.
     inside_try: bool,
     /// Whether we are in the type registration pass (suppress unknown type errors).
     registering_types: bool,
+    /// Pre-resolved imports from other .fl files, keyed by import source string.
+    resolved_imports: HashMap<String, ResolvedImports>,
 }
 
 impl Default for Checker {
@@ -56,23 +65,85 @@ impl Checker {
             defined_names: Vec::new(),
             imported_names: Vec::new(),
             stdlib: StdlibRegistry::new(),
+            expr_types: HashMap::new(),
             untrusted_imports: HashSet::new(),
             inside_try: false,
             registering_types: false,
+            resolved_imports: HashMap::new(),
+        }
+    }
+
+    /// Create a checker with pre-resolved imports from other .fl files.
+    pub fn with_imports(imports: HashMap<String, ResolvedImports>) -> Self {
+        Self {
+            resolved_imports: imports,
+            ..Self::new()
         }
     }
 
     /// Check a program and return diagnostics.
     pub fn check(self, program: &Program) -> Vec<Diagnostic> {
-        self.check_with_types(program).0
+        self.check_full(program).0
     }
 
-    /// Check a program and return (diagnostics, type_map).
-    /// The type_map maps variable/function names to their inferred type display names.
-    pub fn check_with_types(
+    /// Check a program and return (diagnostics, expr_type_map).
+    /// The expr_type_map maps expression spans (start, end) to their resolved types,
+    /// used by codegen for type-directed pipe resolution.
+    pub fn check_full(self, program: &Program) -> (Vec<Diagnostic>, ExprTypeMap) {
+        let (diags, _, expr_types) = self.check_all(program);
+        (diags, expr_types)
+    }
+
+    /// Check a program and return (diagnostics, name_type_map).
+    /// The name_type_map maps variable/function names to their inferred type display names.
+    pub fn check_with_types(self, program: &Program) -> (Vec<Diagnostic>, HashMap<String, String>) {
+        let (diags, name_map, _) = self.check_all(program);
+        (diags, name_map)
+    }
+
+    /// Internal: run all checks and return all maps.
+    fn check_all(
         mut self,
         program: &Program,
-    ) -> (Vec<Diagnostic>, HashMap<String, String>) {
+    ) -> (Vec<Diagnostic>, HashMap<String, String>, ExprTypeMap) {
+        // Pre-register types and functions from resolved imports
+        self.registering_types = true;
+        for resolved in self.resolved_imports.values().cloned().collect::<Vec<_>>() {
+            for decl in &resolved.type_decls {
+                self.register_type_decl(decl);
+            }
+        }
+        self.registering_types = false;
+
+        // Register functions from resolved imports
+        for resolved in self.resolved_imports.values().cloned().collect::<Vec<_>>() {
+            for func in &resolved.function_decls {
+                let return_type = func
+                    .return_type
+                    .as_ref()
+                    .map(|t| self.resolve_type(t))
+                    .unwrap_or(Type::Unknown);
+                let param_types: Vec<_> = func
+                    .params
+                    .iter()
+                    .map(|p| {
+                        p.type_ann
+                            .as_ref()
+                            .map(|t| self.resolve_type(t))
+                            .unwrap_or(Type::Unknown)
+                    })
+                    .collect();
+                let fn_type = Type::Function {
+                    params: param_types,
+                    return_type: Box::new(return_type),
+                };
+                self.env.define(&func.name, fn_type);
+            }
+            for block in &resolved.for_blocks {
+                self.check_for_block_imported(block);
+            }
+        }
+
         // First pass: register all type declarations
         self.registering_types = true;
         for item in &program.items {
@@ -120,7 +191,7 @@ impl Checker {
             .map(|(name, ty)| (name.clone(), ty.display_name()))
             .collect();
 
-        (self.diagnostics, type_map)
+        (self.diagnostics, type_map, self.expr_types)
     }
 
     fn fresh_type_var(&mut self) -> Type {
@@ -315,6 +386,7 @@ impl Checker {
             ItemKind::Const(decl) => self.check_const(decl, item.span),
             ItemKind::Function(decl) => self.check_function(decl, item.span),
             ItemKind::TypeDecl(decl) => self.validate_type_decl_annotations(decl),
+            ItemKind::ForBlock(block) => self.check_for_block(block, item.span),
             ItemKind::Expr(expr) => {
                 let ty = self.check_expr(expr);
                 // Rule 5: No floating Results/Options
@@ -331,9 +403,20 @@ impl Checker {
     }
 
     fn check_import(&mut self, decl: &ImportDecl) {
+        // Look up resolved symbols for this import source
+        let resolved = self.resolved_imports.get(&decl.source).cloned();
+
         for spec in &decl.specifiers {
             let effective_name = spec.alias.as_deref().unwrap_or(&spec.name);
-            self.env.define(effective_name, Type::Unknown);
+
+            // Try to find the actual type from resolved imports
+            let ty = if let Some(ref resolved) = resolved {
+                self.lookup_resolved_symbol(&spec.name, resolved)
+            } else {
+                Type::Unknown
+            };
+
+            self.env.define(effective_name, ty);
             self.imported_names
                 .push((effective_name.to_string(), spec.span));
 
@@ -341,6 +424,75 @@ impl Checker {
             if !decl.trusted && !spec.trusted {
                 self.untrusted_imports.insert(effective_name.to_string());
             }
+        }
+    }
+
+    /// Look up a symbol name in resolved imports and return its type.
+    fn lookup_resolved_symbol(&mut self, name: &str, resolved: &ResolvedImports) -> Type {
+        // Check type declarations
+        for decl in &resolved.type_decls {
+            if decl.name == name {
+                // The type was already registered in the pre-registration pass,
+                // so just look it up from the env
+                if let Some(ty) = self.env.lookup(name).cloned() {
+                    return ty;
+                }
+                return Type::Named(name.to_string());
+            }
+        }
+
+        // Check function declarations
+        for func in &resolved.function_decls {
+            if func.name == name {
+                if let Some(ty) = self.env.lookup(name).cloned() {
+                    return ty;
+                }
+                return Type::Unknown;
+            }
+        }
+
+        // Check const names
+        for const_name in &resolved.const_names {
+            if const_name == name {
+                return Type::Unknown;
+            }
+        }
+
+        // Not found in resolved module — fall back to Unknown
+        Type::Unknown
+    }
+
+    /// Register for-block functions from an imported module without checking bodies.
+    fn check_for_block_imported(&mut self, block: &ForBlock) {
+        let for_type = self.resolve_type(&block.type_name);
+
+        for func in &block.functions {
+            let return_type = func
+                .return_type
+                .as_ref()
+                .map(|t| self.resolve_type(t))
+                .unwrap_or(Type::Unknown);
+
+            let param_types: Vec<_> = func
+                .params
+                .iter()
+                .map(|p| {
+                    if p.name == "self" {
+                        for_type.clone()
+                    } else {
+                        p.type_ann
+                            .as_ref()
+                            .map(|t| self.resolve_type(t))
+                            .unwrap_or(Type::Unknown)
+                    }
+                })
+                .collect();
+
+            let fn_type = Type::Function {
+                params: param_types,
+                return_type: Box::new(return_type),
+            };
+            self.env.define(&func.name, fn_type);
         }
     }
 
@@ -378,8 +530,18 @@ impl Checker {
                 self.defined_names.push((name.clone(), span));
             }
             ConstBinding::Array(names) => {
-                for name in names {
-                    self.env.define(name, Type::Unknown);
+                // Infer element types from the value type
+                for (i, name) in names.iter().enumerate() {
+                    let elem_ty = match &final_type {
+                        // Tuple destructuring: each name gets its positional type
+                        Type::Tuple(types) => types.get(i).cloned().unwrap_or(Type::Unknown),
+                        // Unknown: no info
+                        Type::Unknown | Type::Var(_) => Type::Unknown,
+                        // Known type (e.g., Array<Todo> from useState<Array<Todo>>):
+                        // give each name the full type
+                        other => other.clone(),
+                    };
+                    self.env.define(name, elem_ty);
                     self.defined_names.push((name.clone(), span));
                 }
             }
@@ -493,6 +655,80 @@ impl Checker {
 
         self.env.pop_scope();
         self.current_return_type = prev_return_type;
+    }
+
+    fn check_for_block(&mut self, block: &ForBlock, _span: Span) {
+        let for_type = self.resolve_type(&block.type_name);
+
+        for func in &block.functions {
+            // Check each function, injecting `self` type for self params
+            let return_type = func
+                .return_type
+                .as_ref()
+                .map(|t| self.resolve_type(t))
+                .unwrap_or_else(|| self.fresh_type_var());
+
+            let param_types: Vec<_> = func
+                .params
+                .iter()
+                .map(|p| {
+                    if p.name == "self" {
+                        for_type.clone()
+                    } else {
+                        p.type_ann
+                            .as_ref()
+                            .map(|t| self.resolve_type(t))
+                            .unwrap_or_else(|| self.fresh_type_var())
+                    }
+                })
+                .collect();
+
+            let fn_type = Type::Function {
+                params: param_types.clone(),
+                return_type: Box::new(return_type.clone()),
+            };
+            self.env.define(&func.name, fn_type);
+            if func.exported {
+                self.used_names.insert(func.name.clone());
+            }
+            self.defined_names.push((func.name.clone(), block.span));
+
+            // Check the function body
+            let prev_return_type = self.current_return_type.take();
+            self.current_return_type = Some(return_type.clone());
+
+            self.env.push_scope();
+
+            for (param, ty) in func.params.iter().zip(param_types.iter()) {
+                self.env.define(&param.name, ty.clone());
+            }
+
+            let body_type = self.check_expr(&func.body);
+
+            if let Some(ref declared_return) = func.return_type {
+                let resolved = self.resolve_type(declared_return);
+                if !self.types_compatible(&resolved, &body_type)
+                    && !matches!(body_type, Type::Var(_))
+                {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            format!(
+                                "function `{}` return type mismatch: expected `{}`, found `{}`",
+                                func.name,
+                                resolved.display_name(),
+                                body_type.display_name()
+                            ),
+                            block.span,
+                        )
+                        .with_label("return type mismatch")
+                        .with_code("E001"),
+                    );
+                }
+            }
+
+            self.env.pop_scope();
+            self.current_return_type = prev_return_type;
+        }
     }
 
     /// Checks if a function body contains a return expression.

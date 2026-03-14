@@ -24,6 +24,8 @@ pub enum ItemKind {
     Function(FunctionDecl),
     /// `type T = ...` or `export type T = ...`
     TypeDecl(TypeDecl),
+    /// `for Type { fn ... }` — group functions under a type
+    ForBlock(ForBlock),
     /// Expression statement (for REPL / scripts)
     Expr(Expr),
 }
@@ -131,6 +133,16 @@ pub struct VariantField {
     pub span: Span,
 }
 
+// ── For Blocks ──────────────────────────────────────────────────
+
+/// `for Type { fn f(self) -> T { ... } }` — group functions under a type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForBlock {
+    pub type_name: TypeExpr,
+    pub functions: Vec<FunctionDecl>,
+    pub span: Span,
+}
+
 // ── Type Expressions ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq)]
@@ -200,8 +212,12 @@ pub enum ExprKind {
     Unwrap(Box<Expr>),
 
     // -- Calls & Construction --
-    /// Function call: `f(a, b, name: c)`
-    Call { callee: Box<Expr>, args: Vec<Arg> },
+    /// Function call: `f(a, b, name: c)` or `f<T>(a, b)`
+    Call {
+        callee: Box<Expr>,
+        type_args: Vec<TypeExpr>,
+        args: Vec<Arg>,
+    },
     /// Type constructor: `User(name: "Ryan", email: e)` or `User(..existing, name: "New")`
     Construct {
         type_name: String,

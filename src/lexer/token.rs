@@ -45,6 +45,10 @@ pub enum TokenKind {
     Await,
     If,
     Else,
+    /// `for` — for block keyword (grouping functions under a type)
+    For,
+    /// `self` — explicit receiver parameter in for blocks
+    SelfKw,
     /// `try` — wrap throwing expression in Result
     Try,
 
@@ -229,6 +233,8 @@ pub fn lookup_keyword(word: &str) -> Option<TokenKind> {
         "await" => Some(TokenKind::Await),
         "if" => Some(TokenKind::If),
         "else" => Some(TokenKind::Else),
+        "for" => Some(TokenKind::For),
+        "self" => Some(TokenKind::SelfKw),
         "try" => Some(TokenKind::Try),
         "true" => Some(TokenKind::Bool(true)),
         "false" => Some(TokenKind::Bool(false)),
@@ -270,6 +276,8 @@ mod tests {
         assert_eq!(lookup_keyword("Err"), Some(TokenKind::Err));
         assert_eq!(lookup_keyword("Some"), Some(TokenKind::Some));
         assert_eq!(lookup_keyword("None"), Some(TokenKind::None));
+        assert_eq!(lookup_keyword("for"), Some(TokenKind::For));
+        assert_eq!(lookup_keyword("self"), Some(TokenKind::SelfKw));
         assert_eq!(lookup_keyword("true"), Some(TokenKind::Bool(true)));
         assert_eq!(lookup_keyword("false"), Some(TokenKind::Bool(false)));
     }
