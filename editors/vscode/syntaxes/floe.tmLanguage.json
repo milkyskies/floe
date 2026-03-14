@@ -6,14 +6,14 @@
     { "include": "#comments" },
     { "include": "#strings" },
     { "include": "#template-literals" },
+    { "include": "#jsx" },
     { "include": "#keywords" },
     { "include": "#storage" },
     { "include": "#constants" },
     { "include": "#types" },
-    { "include": "#operators" },
     { "include": "#functions" },
     { "include": "#lambda" },
-    { "include": "#jsx" },
+    { "include": "#operators" },
     { "include": "#numbers" },
     { "include": "#identifiers" }
   ],
@@ -130,6 +130,24 @@
           "match": "\\b(Result|Option|Brand|Array|Promise|JSX)\\b"
         },
         {
+          "comment": "Generic type parameters: <Type>",
+          "begin": "<",
+          "end": ">",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.typeparameters.begin.floe" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.typeparameters.end.floe" }
+          },
+          "patterns": [
+            { "include": "#types" },
+            {
+              "name": "punctuation.separator.comma.floe",
+              "match": ","
+            }
+          ]
+        },
+        {
           "comment": "User-defined types (PascalCase identifiers)",
           "name": "entity.name.type.floe",
           "match": "\\b[A-Z][a-zA-Z0-9]*\\b"
@@ -160,11 +178,11 @@
         },
         {
           "name": "keyword.operator.comparison.floe",
-          "match": "==|!=|<=|>=|<|>"
+          "match": "==|!=|<=|>="
         },
         {
           "name": "keyword.operator.logical.floe",
-          "match": "&&|\\|\\||!"
+          "match": "&&|!"
         },
         {
           "name": "keyword.operator.arithmetic.floe",
@@ -177,7 +195,7 @@
         },
         {
           "name": "keyword.operator.assignment.floe",
-          "match": "="
+          "match": "(?<!=|!)="
         }
       ]
     },
@@ -203,13 +221,26 @@
     "lambda": {
       "patterns": [
         {
+          "comment": "Zero-arg lambda: ||",
+          "match": "(\\|)(\\|)(?!>|\\|)",
+          "captures": {
+            "1": { "name": "punctuation.definition.parameters.begin.floe" },
+            "2": { "name": "punctuation.definition.parameters.end.floe" }
+          }
+        },
+        {
           "comment": "Pipe lambda parameters: |x| or |a, b|",
-          "match": "(\\|)([^|>]*?)(\\|)(?!>|\\|)",
+          "match": "(\\|)([^|>][^|]*?)(\\|)(?!>)",
           "captures": {
             "1": { "name": "punctuation.definition.parameters.begin.floe" },
             "2": { "name": "variable.parameter.floe" },
             "3": { "name": "punctuation.definition.parameters.end.floe" }
           }
+        },
+        {
+          "comment": "Union type bar",
+          "name": "keyword.operator.union.floe",
+          "match": "\\|(?!>|\\|)"
         }
       ]
     },
@@ -225,8 +256,8 @@
           }
         },
         {
-          "comment": "JSX self-closing tag",
-          "begin": "(<)([A-Z][a-zA-Z0-9]*|[a-z][a-zA-Z0-9-]*)(?=\\s|/|>)",
+          "comment": "JSX opening/self-closing tag",
+          "begin": "(<)([A-Z][a-zA-Z0-9]*|[a-z][a-zA-Z0-9-]*)(?=[\\s/>])",
           "beginCaptures": {
             "1": { "name": "punctuation.definition.tag.begin.floe" },
             "2": { "name": "entity.name.tag.floe" }
