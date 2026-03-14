@@ -45,6 +45,17 @@ This project uses **conventional commits** + **release-please** for automated ve
 4. **The tag triggers the release workflow** which:
    - Cross-compiles binaries for macOS (arm64 + x86), Linux (x86 + arm64), Windows
    - Uploads them as assets on the GitHub Release
+   - Publishes `floe` to crates.io
+   - Publishes `@floelang/vite-plugin` to npm
+   - Publishes the VS Code extension to Open VSX
+
+### Package names
+
+| Package | Registry | Name |
+|---|---|---|
+| Compiler CLI | crates.io | `floe` |
+| Vite plugin | npm | `@floelang/vite-plugin` |
+| VS Code extension | Open VSX | `floelang.floe` |
 
 ### What you need to do
 
