@@ -1,8 +1,23 @@
 ---
 source: tests/snapshot_codegen.rs
-assertion_line: 32
 expression: output
 ---
-const result = format(transform(data));
+const data = 42;
 
-const placed = wrap("(", value, ")");
+function transform(x: number): string {
+  "transformed";
+}
+
+function format(s: string): string {
+  s;
+}
+
+function wrap(prefix: string, value: string, suffix: string): string {
+  prefix;
+}
+
+const _result = format(transform(data));
+
+const value = "hello";
+
+const _placed = wrap("(", value, ")");

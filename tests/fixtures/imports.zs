@@ -1,2 +1,6 @@
 import { useState, useEffect } from "react"
 import { fetchUser } from "./api"
+
+const _state = useState(0)
+const _effect = useEffect
+const _user = fetchUser

@@ -459,8 +459,15 @@ impl Parser {
             });
         }
 
-        // Named type: `string`, `Option<T>`, `Result<T, E>`
-        let name = self.expect_identifier()?;
+        // Named type: `string`, `Option<T>`, `Result<T, E>`, `JSX.Element`
+        let mut name = self.expect_identifier()?;
+
+        // Support dotted type names (e.g. `JSX.Element`)
+        while self.check(&TokenKind::Dot) {
+            self.advance();
+            let part = self.expect_identifier()?;
+            name = format!("{name}.{part}");
+        }
 
         let type_args = if self.check(&TokenKind::LessThan) {
             self.advance();
