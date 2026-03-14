@@ -330,6 +330,14 @@ impl Checker {
 
             ExprKind::Await(inner) => self.check_expr(inner),
 
+            ExprKind::Try(inner) => {
+                let inner_ty = self.check_expr(inner);
+                Type::Result {
+                    ok: Box::new(inner_ty),
+                    err: Box::new(Type::Unknown),
+                }
+            }
+
             ExprKind::Ok(inner) => {
                 let inner_ty = self.check_expr(inner);
                 Type::Result {

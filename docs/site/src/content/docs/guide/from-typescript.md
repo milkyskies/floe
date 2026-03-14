@@ -96,9 +96,9 @@ const result = users
 
 // Floe
 const result = users
-  |> filter(.active)
-  |> map(.name)
-  |> join(", ")
+  |> Array.filter(.active)
+  |> Array.map(.name)
+  |> String.join(", ")
 ```
 
 ### Pattern matching instead of switch
@@ -119,23 +119,26 @@ match action.type {
 }
 ```
 
-### Result instead of try/catch
+### `try` instead of try/catch
 
 ```typescript
 // TypeScript
 try {
-  const data = await fetchData()
+  const data = JSON.parse(input)
   return data
 } catch (e) {
   return null
 }
 
-// Floe
-match await fetchData() {
+// Floe — wrap throwing functions with `try`
+const result = try JSON.parse(input)
+match result {
   Ok(data) -> Some(data),
   Err(_) -> None,
 }
 ```
+
+The `try` keyword wraps any expression in a try/catch and returns a `Result<T, Error>`. Use it at the boundary when calling TypeScript functions that might throw.
 
 ### Option instead of null
 

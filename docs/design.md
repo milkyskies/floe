@@ -770,7 +770,7 @@ Automatic conversions at import boundary:
 - `T | undefined` → `Option<T>`
 - `T | null | undefined` → `Option<T>`
 - External `any` → `unknown` (forces narrowing)
-- Functions that throw → compiler warns; can wrap with `boundary` block to get `Result`
+- Functions that throw → use `try` expression to wrap in `Result`
 
 ```floe
 import { findElement } from "some-dom-lib"
@@ -778,10 +778,26 @@ import { findElement } from "some-dom-lib"
 // Floe sees: findElement(id: string): Option<Element>
 
 match findElement("app") {
-  Some(el) -> render(el)
-  None     -> panic("no #app element")
+  Some(el) -> render(el),
+  None     -> panic("no #app element"),
 }
 
+// Wrapping a throwing function in Result:
+import { JSON } from "std"
+const result = try JSON.parse(input)
+// result: Result<unknown, Error>
+
+match result {
+  Ok(data) -> process(data),
+  Err(e)   -> handleError(e),
+}
+```
+
+The `try` expression compiles to an IIFE with try/catch:
+
+```typescript
+// try JSON.parse(input) →
+(() => { try { return { ok: true as const, value: JSON.parse(input) }; } catch (_e) { return { ok: false as const, error: _e }; } })()
 ```
 
 ### Code Generator (`zs_codegen`)
@@ -798,6 +814,7 @@ Emits clean, readable `.tsx`. Zero runtime imports.
 | `.id != id` (in callback) | `(x) => x.id != id` |
 | `.Variant` (implicit member) | `Variant` (resolved by compiler) |
 | `fn f(x: T) -> U { ... }` | `function f(x: T): U { ... }` |
+| `try expr` | `(() => { try { return { ok: true, value: expr }; } catch (_e) { return { ok: false, error: _e }; } })()` |
 | `match x { A -> ..., B -> ... }` | `x.tag === "A" ? ... : x.tag === "B" ? ... : absurd(x)` |
 | `fetchUser(id)?` | `const _r = fetchUser(id); if (!_r.ok) return _r; const val = _r.value;` |
 | `Ok(value)` | `{ ok: true, value }` |

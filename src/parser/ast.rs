@@ -229,6 +229,8 @@ pub enum ExprKind {
     Return(Option<Box<Expr>>),
     /// Await: `await expr`
     Await(Box<Expr>),
+    /// Try: `try expr` — wraps a throwing expression in Result
+    Try(Box<Expr>),
 
     // -- Built-in constructors --
     /// `Ok(expr)`
