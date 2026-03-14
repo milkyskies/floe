@@ -456,6 +456,9 @@ impl Parser {
                 }
             }
 
+            // Dot shorthand: `.field` or `.field op expr`
+            TokenKind::Dot => self.parse_dot_shorthand(),
+
             // Pipe lambda: `|params| body` or `|| body` (zero-arg)
             TokenKind::VerticalBar => self.parse_pipe_lambda(),
 
@@ -553,6 +556,47 @@ impl Parser {
         }
 
         Ok(params)
+    }
+
+    // ── Dot Shorthand ────────────────────────────────────────────
+
+    /// Parse `.field` or `.field op expr` dot shorthand expression.
+    fn parse_dot_shorthand(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.current_span();
+        self.expect(&TokenKind::Dot)?;
+        let field = self.expect_identifier()?;
+
+        // Check for optional binary operator predicate
+        let predicate = match self.current_kind() {
+            TokenKind::EqualEqual => Some(BinOp::Eq),
+            TokenKind::BangEqual => Some(BinOp::NotEq),
+            TokenKind::LessThan => Some(BinOp::Lt),
+            TokenKind::GreaterThan => Some(BinOp::Gt),
+            TokenKind::LessEqual => Some(BinOp::LtEq),
+            TokenKind::GreaterEqual => Some(BinOp::GtEq),
+            TokenKind::AmpAmp => Some(BinOp::And),
+            TokenKind::PipePipe => Some(BinOp::Or),
+            TokenKind::Plus => Some(BinOp::Add),
+            TokenKind::Minus => Some(BinOp::Sub),
+            TokenKind::Star => Some(BinOp::Mul),
+            TokenKind::Slash => Some(BinOp::Div),
+            TokenKind::Percent => Some(BinOp::Mod),
+            _ => Option::None,
+        };
+
+        let predicate = if let Some(op) = predicate {
+            self.advance(); // consume the operator
+            let rhs = self.parse_primary_expr()?;
+            Some((op, Box::new(rhs)))
+        } else {
+            Option::None
+        };
+
+        let end_span = self.previous_span();
+        Ok(Expr {
+            kind: ExprKind::DotShorthand { field, predicate },
+            span: self.merge_spans(start_span, end_span),
+        })
     }
 
     // ── Constructors ─────────────────────────────────────────────

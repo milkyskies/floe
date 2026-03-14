@@ -428,6 +428,15 @@ impl Checker {
             }
 
             ExprKind::Spread(inner) => self.check_expr(inner),
+
+            ExprKind::DotShorthand { predicate, .. } => {
+                // Check the predicate RHS expression if present
+                if let Some((_op, rhs)) = predicate {
+                    self.check_expr(rhs);
+                }
+                // Dot shorthand produces a function
+                Type::Unknown
+            }
         }
     }
 

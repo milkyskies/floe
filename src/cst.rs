@@ -695,6 +695,10 @@ impl<'src> CstParser<'src> {
 
             Some(TokenKind::LessThan) => self.parse_jsx_element(),
 
+            Some(TokenKind::Dot) => {
+                self.parse_dot_shorthand();
+            }
+
             Some(TokenKind::VerticalBar) => {
                 self.parse_pipe_lambda();
             }
@@ -790,6 +794,39 @@ impl<'src> CstParser<'src> {
             self.parse_expr();
         } else {
             self.parse_expr();
+        }
+
+        self.builder.finish_node();
+    }
+
+    // ── Dot Shorthand ────────────────────────────────────────────
+
+    /// Parse `.field` or `.field op expr` dot shorthand expression.
+    fn parse_dot_shorthand(&mut self) {
+        self.builder.start_node(SyntaxKind::DOT_SHORTHAND.into());
+        self.expect(TokenKind::Dot);
+        self.eat_trivia();
+        self.expect_ident();
+        self.eat_trivia();
+
+        // Check for optional binary operator predicate
+        if self.at(TokenKind::EqualEqual)
+            || self.at(TokenKind::BangEqual)
+            || self.at(TokenKind::LessThan)
+            || self.at(TokenKind::GreaterThan)
+            || self.at(TokenKind::LessEqual)
+            || self.at(TokenKind::GreaterEqual)
+            || self.at(TokenKind::AmpAmp)
+            || self.at(TokenKind::PipePipe)
+            || self.at(TokenKind::Plus)
+            || self.at(TokenKind::Minus)
+            || self.at(TokenKind::Star)
+            || self.at(TokenKind::Slash)
+            || self.at(TokenKind::Percent)
+        {
+            self.bump(); // operator
+            self.eat_trivia();
+            self.parse_primary_expr();
         }
 
         self.builder.finish_node();

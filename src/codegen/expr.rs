@@ -250,6 +250,40 @@ impl Codegen {
                 self.push("...");
                 self.emit_expr(inner);
             }
+
+            ExprKind::DotShorthand { field, predicate } => {
+                match predicate {
+                    Some((op, rhs)) => match op {
+                        BinOp::Eq => {
+                            self.needs_deep_equal = true;
+                            self.push("(_x) => __zenEq(_x.");
+                            self.push(field);
+                            self.push(", ");
+                            self.emit_expr(rhs);
+                            self.push(")");
+                        }
+                        BinOp::NotEq => {
+                            self.needs_deep_equal = true;
+                            self.push("(_x) => !__zenEq(_x.");
+                            self.push(field);
+                            self.push(", ");
+                            self.emit_expr(rhs);
+                            self.push(")");
+                        }
+                        _ => {
+                            self.push("(_x) => _x.");
+                            self.push(field);
+                            self.push(&format!(" {} ", binop_str(*op)));
+                            self.emit_expr(rhs);
+                        }
+                    },
+                    None => {
+                        // `.field` → `(_x) => _x.field`
+                        self.push("(_x) => _x.");
+                        self.push(field);
+                    }
+                }
+            }
         }
     }
 
