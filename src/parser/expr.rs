@@ -218,6 +218,15 @@ impl Parser {
                     span: self.merge_spans(start_span, end_span),
                 })
             }
+            TokenKind::Try => {
+                self.advance();
+                let operand = self.parse_unary_expr()?;
+                let end_span = self.previous_span();
+                Ok(Expr {
+                    kind: ExprKind::Try(Box::new(operand)),
+                    span: self.merge_spans(start_span, end_span),
+                })
+            }
             _ => self.parse_postfix_expr(),
         }
     }

@@ -32,6 +32,8 @@ pub enum ItemKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportDecl {
+    /// Whether the entire import is trusted: `import trusted { ... } from "..."`
+    pub trusted: bool,
     pub specifiers: Vec<ImportSpecifier>,
     pub source: String,
 }
@@ -40,6 +42,8 @@ pub struct ImportDecl {
 pub struct ImportSpecifier {
     pub name: String,
     pub alias: Option<String>,
+    /// Whether this specific import is trusted: `import { trusted foo } from "..."`
+    pub trusted: bool,
     pub span: Span,
 }
 
@@ -229,6 +233,8 @@ pub enum ExprKind {
     Return(Option<Box<Expr>>),
     /// Await: `await expr`
     Await(Box<Expr>),
+    /// Try: `try expr` — wraps a throwing expression in Result
+    Try(Box<Expr>),
 
     // -- Built-in constructors --
     /// `Ok(expr)`

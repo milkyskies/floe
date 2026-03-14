@@ -447,6 +447,54 @@ fn import_named() {
     }
 }
 
+#[test]
+fn import_trusted_all() {
+    match first_item(r#"import trusted { capitalize, slugify } from "string-utils""#) {
+        ItemKind::Import(decl) => {
+            assert!(decl.trusted);
+            assert_eq!(decl.specifiers.len(), 2);
+            assert_eq!(decl.specifiers[0].name, "capitalize");
+            assert_eq!(decl.specifiers[1].name, "slugify");
+        }
+        other => panic!("expected import, got {other:?}"),
+    }
+}
+
+#[test]
+fn import_trusted_per_specifier() {
+    match first_item(r#"import { trusted capitalize, fetchUser } from "some-lib""#) {
+        ItemKind::Import(decl) => {
+            assert!(!decl.trusted);
+            assert_eq!(decl.specifiers.len(), 2);
+            assert!(decl.specifiers[0].trusted);
+            assert_eq!(decl.specifiers[0].name, "capitalize");
+            assert!(!decl.specifiers[1].trusted);
+            assert_eq!(decl.specifiers[1].name, "fetchUser");
+        }
+        other => panic!("expected import, got {other:?}"),
+    }
+}
+
+#[test]
+fn try_expression() {
+    match first_expr(r#"try fetchData("hello")"#) {
+        ExprKind::Try(inner) => {
+            assert!(matches!(&inner.kind, ExprKind::Call { .. }));
+        }
+        other => panic!("expected try expression, got {other:?}"),
+    }
+}
+
+#[test]
+fn try_await_expression() {
+    match first_expr(r#"try await fetchData("hello")"#) {
+        ExprKind::Try(inner) => {
+            assert!(matches!(&inner.kind, ExprKind::Await(_)));
+        }
+        other => panic!("expected try expression, got {other:?}"),
+    }
+}
+
 // ── Type Declarations ────────────────────────────────────────
 
 #[test]

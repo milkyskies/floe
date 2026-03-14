@@ -31,6 +31,7 @@ pub enum SyntaxKind {
     KW_AWAIT,
     KW_IF,
     KW_ELSE,
+    KW_TRY,
 
     // Built-in constructors
     KW_OK,
@@ -124,6 +125,7 @@ pub enum SyntaxKind {
     RETURN_EXPR,
     AWAIT_EXPR,
     UNWRAP_EXPR,
+    TRY_EXPR,
     GROUPED_EXPR,
     ARRAY_EXPR,
     SPREAD_EXPR,
@@ -205,6 +207,7 @@ pub fn token_kind_to_syntax(kind: &TokenKind) -> SyntaxKind {
         TokenKind::Await => SyntaxKind::KW_AWAIT,
         TokenKind::If => SyntaxKind::KW_IF,
         TokenKind::Else => SyntaxKind::KW_ELSE,
+        TokenKind::Try => SyntaxKind::KW_TRY,
         TokenKind::Ok => SyntaxKind::KW_OK,
         TokenKind::Err => SyntaxKind::KW_ERR,
         TokenKind::Some => SyntaxKind::KW_SOME,
