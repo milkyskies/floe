@@ -299,16 +299,17 @@ impl LanguageServer for FloeLsp {
 
         // Search current document
         for sym in doc.index.find_by_name(word) {
-            // Skip the symbol at the cursor position itself (don't jump to yourself)
-            if offset >= sym.start && offset <= sym.end {
-                continue;
-            }
-
             // If this symbol is an import, try to resolve to the source file
+            // (even if cursor is on the import itself — that's the point)
             if let Some(source_spec) = &sym.import_source
                 && let Some(location) = Self::resolve_import_location(&uri, source_spec, word)
             {
                 return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+
+            // Skip the symbol at the cursor position itself (don't jump to yourself)
+            if offset >= sym.start && offset <= sym.end {
+                continue;
             }
 
             let range = offset_to_range(&doc.content, sym.start, sym.end);
