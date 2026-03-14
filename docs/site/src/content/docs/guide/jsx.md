@@ -7,7 +7,7 @@ ZenScript has first-class JSX support. Write React components with all the safet
 ## Components
 
 ```zenscript
-import { useState } from "react"
+import { useState, JSX } from "react"
 
 export function Counter(): JSX.Element {
   const [count, setCount] = useState(0)

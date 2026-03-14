@@ -32,13 +32,16 @@ Full TextMate grammar for `.zs` files:
 
 ### Language Server
 
-Real-time diagnostics as you type:
-- Parse errors
-- Type errors
-- Unused variable/import warnings
-- Banned keyword errors
+Full IDE features powered by `zsc lsp`:
 
-Hover information for built-in types and constructors.
+- **Diagnostics** - parse errors, type errors, unused variable/import warnings
+- **Hover** - type signatures and documentation
+- **Completions** - symbols, keywords, builtins, cross-file with auto-import
+- **Pipe-aware autocomplete** - type `|>` and see functions that match the piped type
+- **Go to Definition** - jump to symbol definitions across files
+- **Find References** - find all usages of a symbol
+- **Document Symbols** - outline view of functions, types, and constants
+- **Quick Fix: Add return type** - auto-insert inferred return type on exported functions
 
 ### Snippets
 
