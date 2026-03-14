@@ -239,6 +239,8 @@ pub enum ExprKind {
     Some(Box<Expr>),
     /// `None`
     None,
+    /// Unit value: `()`
+    Unit,
 
     // -- JSX --
     /// JSX element: `<Component prop={value}>children</Component>`

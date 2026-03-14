@@ -97,3 +97,18 @@ fn snapshot_error_string_concat() {
     let output = get_diagnostics("test.zs", r#"const _x = "a" + "b""#);
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn snapshot_error_banned_void() {
+    let output = error_fixture("banned_void");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_error_missing_return() {
+    let output = get_diagnostics(
+        "test.zs",
+        "function getName(_id: string): string {\n  const _x = 42\n}",
+    );
+    insta::assert_snapshot!(output);
+}

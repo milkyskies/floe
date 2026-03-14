@@ -54,8 +54,8 @@ pub enum Type {
     Var(usize),
     /// The unknown/any escape hatch
     Unknown,
-    /// Void (no return value)
-    Void,
+    /// Unit type () — replaces void, a real value usable in generics
+    Unit,
 }
 
 impl Type {
@@ -106,7 +106,7 @@ impl Type {
             Type::Union { name, .. } => name.clone(),
             Type::Var(id) => format!("?T{id}"),
             Type::Unknown => "unknown".to_string(),
-            Type::Void => "void".to_string(),
+            Type::Unit => "()".to_string(),
         }
     }
 }
@@ -353,7 +353,7 @@ impl Checker {
             "number" => Type::Number,
             "string" => Type::String,
             "bool" => Type::Bool,
-            "void" => Type::Void,
+            "()" => Type::Unit,
             "undefined" => Type::Undefined,
             "unknown" => Type::Unknown,
             "Result" => {
@@ -565,10 +565,58 @@ impl Checker {
                     .with_code("E001"),
                 );
             }
+
+            // Rule: non-unit functions must have an explicit return value
+            if !matches!(resolved, Type::Unit)
+                && matches!(body_type, Type::Unit)
+                && !self.body_has_return(&decl.body)
+            {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        format!(
+                            "function `{}` must return a value of type `{}`",
+                            decl.name,
+                            resolved.display_name()
+                        ),
+                        span,
+                    )
+                    .with_label("missing return value")
+                    .with_help("Add a return expression or change return type to `()`")
+                    .with_code("E013"),
+                );
+            }
         }
 
         self.env.pop_scope();
         self.current_return_type = prev_return_type;
+    }
+
+    /// Checks if a function body contains a return expression.
+    fn body_has_return(&self, body: &Expr) -> bool {
+        match &body.kind {
+            ExprKind::Return(Some(_)) => true,
+            ExprKind::Block(items) => items.iter().any(|item| {
+                if let ItemKind::Expr(e) = &item.kind {
+                    self.body_has_return(e)
+                } else {
+                    false
+                }
+            }),
+            ExprKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.body_has_return(then_branch)
+                    && else_branch
+                        .as_ref()
+                        .is_some_and(|e| self.body_has_return(e))
+            }
+            ExprKind::Match { arms, .. } => {
+                !arms.is_empty() && arms.iter().all(|arm| self.body_has_return(&arm.body))
+            }
+            _ => false,
+        }
     }
 
     // ── Expression Checking ──────────────────────────────────────
@@ -727,7 +775,32 @@ impl Checker {
                 }
 
                 if let Some(spread_expr) = spread {
-                    self.check_expr(spread_expr);
+                    let spread_type = self.check_expr(spread_expr);
+
+                    // Rule: warn on overlapping spread keys
+                    if let Type::Record(spread_fields) = &spread_type {
+                        let spread_keys: Vec<&str> =
+                            spread_fields.iter().map(|(k, _)| k.as_str()).collect();
+                        for arg in args.iter() {
+                            if let Arg::Named { label, .. } = arg
+                                && spread_keys.contains(&label.as_str())
+                            {
+                                self.diagnostics.push(
+                                    Diagnostic::warning(
+                                        format!(
+                                            "field `{label}` from spread is overwritten"
+                                        ),
+                                        expr.span,
+                                    )
+                                    .with_label(format!(
+                                        "`{label}` exists in the spread source"
+                                    ))
+                                    .with_help("The spread value will be replaced by the explicit field")
+                                    .with_code("W003"),
+                                );
+                            }
+                        }
+                    }
                 }
                 for arg in args {
                     match arg {
@@ -824,7 +897,7 @@ impl Checker {
                         result_type = Some(arm_type);
                     }
                 }
-                result_type.unwrap_or(Type::Void)
+                result_type.unwrap_or(Type::Unit)
             }
 
             ExprKind::If {
@@ -844,7 +917,7 @@ impl Checker {
                 if let Some(e) = value {
                     self.check_expr(e)
                 } else {
-                    Type::Void
+                    Type::Unit
                 }
             }
 
@@ -873,6 +946,8 @@ impl Checker {
 
             ExprKind::None => Type::Option(Box::new(Type::Unknown)),
 
+            ExprKind::Unit => Type::Unit,
+
             ExprKind::Jsx(element) => {
                 self.check_jsx(element);
                 Type::Named("JSX.Element".to_string())
@@ -880,7 +955,7 @@ impl Checker {
 
             ExprKind::Block(items) => {
                 self.env.push_scope();
-                let mut last_type = Type::Void;
+                let mut last_type = Type::Unit;
                 let mut found_return = false;
                 for (i, item) in items.iter().enumerate() {
                     if found_return {
@@ -1263,7 +1338,7 @@ impl Checker {
             (Type::Number, Type::Number)
             | (Type::String, Type::String)
             | (Type::Bool, Type::Bool)
-            | (Type::Void, Type::Void)
+            | (Type::Unit, Type::Unit)
             | (Type::Undefined, Type::Undefined) => true,
             (Type::Named(a), Type::Named(b)) => a == b,
             (Type::Brand { tag: a, .. }, Type::Brand { tag: b, .. }) => a == b,

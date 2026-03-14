@@ -530,8 +530,8 @@ pub fn wrap_boundary_type(ts_type: &TsType) -> Type {
             "string" => Type::String,
             "number" => Type::Number,
             "boolean" => Type::Bool,
-            "void" => Type::Void,
-            "never" => Type::Void,
+            "void" => Type::Unit,
+            "never" => Type::Unit,
             _ => Type::Unknown,
         },
 
@@ -601,7 +601,7 @@ fn wrap_union_boundary(parts: &[TsType]) -> Type {
         wrap_boundary_type(non_null_parts[0])
     } else if non_null_parts.is_empty() {
         // `null | undefined` → Option<Void> (shouldn't happen in practice)
-        Type::Void
+        Type::Unit
     } else {
         // Multi-type union without null/undefined: stay as Unknown for now
         // A full implementation would create proper union types
@@ -944,7 +944,7 @@ mod tests {
             wrapped,
             Type::Function {
                 params: vec![Type::Unknown],
-                return_type: Box::new(Type::Void),
+                return_type: Box::new(Type::Unit),
             }
         );
     }

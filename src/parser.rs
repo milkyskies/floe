@@ -431,6 +431,20 @@ impl Parser {
     fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
         let start_span = self.current_span();
 
+        // Unit type: `()` — must check before function type
+        if self.check(&TokenKind::LeftParen) && self.is_unit_type() {
+            self.advance(); // (
+            self.advance(); // )
+            let end_span = self.previous_span();
+            return Ok(TypeExpr {
+                kind: TypeExprKind::Named {
+                    name: "()".to_string(),
+                    type_args: Vec::new(),
+                },
+                span: self.merge_spans(start_span, end_span),
+            });
+        }
+
         // Function type: `(params) => ReturnType`
         if self.check(&TokenKind::LeftParen) && self.is_function_type() {
             return self.parse_function_type();
@@ -500,6 +514,15 @@ impl Parser {
             },
             span: self.merge_spans(start_span, end_span),
         })
+    }
+
+    /// Is the current `(` the start of a unit type `()`?
+    /// True when `(` is immediately followed by `)` and NOT by `=>`.
+    fn is_unit_type(&self) -> bool {
+        self.pos + 1 < self.tokens.len()
+            && self.tokens[self.pos + 1].kind == TokenKind::RightParen
+            && !(self.pos + 2 < self.tokens.len()
+                && self.tokens[self.pos + 2].kind == TokenKind::FatArrow)
     }
 
     /// Heuristic: is the current `(` the start of a function type?
@@ -955,10 +978,19 @@ impl Parser {
                 })
             }
 
-            // Parenthesized expression or arrow function
+            // Parenthesized expression, arrow function, or unit value ()
             TokenKind::LeftParen => {
                 if self.is_arrow_function() {
                     self.parse_arrow_function()
+                } else if self.peek_kind() == Some(&TokenKind::RightParen) {
+                    // Unit value: ()
+                    self.advance(); // (
+                    self.advance(); // )
+                    let end_span = self.previous_span();
+                    Ok(Expr {
+                        kind: ExprKind::Unit,
+                        span: self.merge_spans(start_span, end_span),
+                    })
                 } else {
                     self.advance();
                     let inner = self.parse_expr()?;

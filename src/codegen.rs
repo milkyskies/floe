@@ -11,6 +11,7 @@ pub struct Codegen {
     output: String,
     indent: usize,
     has_jsx: bool,
+    needs_deep_equal: bool,
 }
 
 impl Codegen {
@@ -19,6 +20,7 @@ impl Codegen {
             output: String::new(),
             indent: 0,
             has_jsx: false,
+            needs_deep_equal: false,
         }
     }
 
@@ -30,6 +32,22 @@ impl Codegen {
             }
             self.emit_item(item);
             self.newline();
+        }
+
+        // Prepend structural equality helper if any == or != was used
+        if self.needs_deep_equal {
+            let helper = concat!(
+                "function __zenEq(a: unknown, b: unknown): boolean {\n",
+                "  if (a === b) return true;\n",
+                "  if (a == null || b == null) return false;\n",
+                "  if (typeof a !== \"object\" || typeof b !== \"object\") return false;\n",
+                "  const ka = Object.keys(a as object);\n",
+                "  const kb = Object.keys(b as object);\n",
+                "  if (ka.length !== kb.length) return false;\n",
+                "  return ka.every((k) => __zenEq((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));\n",
+                "}\n\n",
+            );
+            self.output = format!("{helper}{}", self.output);
         }
 
         CodegenOutput {
@@ -266,6 +284,12 @@ impl Codegen {
                     return;
                 }
 
+                // Unit type () becomes void in TypeScript
+                if name == "()" {
+                    self.push("void");
+                    return;
+                }
+
                 self.push(name);
                 if !type_args.is_empty() {
                     self.push("<");
@@ -337,11 +361,29 @@ impl Codegen {
             ExprKind::Identifier(name) => self.push(name),
             ExprKind::Placeholder => self.push("_"),
 
-            ExprKind::Binary { left, op, right } => {
-                self.emit_expr(left);
-                self.push(&format!(" {} ", binop_str(*op)));
-                self.emit_expr(right);
-            }
+            ExprKind::Binary { left, op, right } => match op {
+                BinOp::Eq => {
+                    self.needs_deep_equal = true;
+                    self.push("__zenEq(");
+                    self.emit_expr(left);
+                    self.push(", ");
+                    self.emit_expr(right);
+                    self.push(")");
+                }
+                BinOp::NotEq => {
+                    self.needs_deep_equal = true;
+                    self.push("!__zenEq(");
+                    self.emit_expr(left);
+                    self.push(", ");
+                    self.emit_expr(right);
+                    self.push(")");
+                }
+                _ => {
+                    self.emit_expr(left);
+                    self.push(&format!(" {} ", binop_str(*op)));
+                    self.emit_expr(right);
+                }
+            },
 
             ExprKind::Unary { op, operand } => {
                 self.push(unaryop_str(*op));
@@ -476,6 +518,10 @@ impl Codegen {
 
             // None → undefined
             ExprKind::None => {
+                self.push("undefined");
+            }
+
+            ExprKind::Unit => {
                 self.push("undefined");
             }
 
@@ -1316,12 +1362,14 @@ mod tests {
         assert_eq!(emit("(a, b) => a + b"), "(a, b) => a + b;");
     }
 
-    // ── Equality → strict equality ──────────────────────────────
+    // ── Equality → structural equality ──────────────────────────
 
     #[test]
-    fn equality_becomes_strict() {
-        assert_eq!(emit("a == b"), "a === b;");
-        assert_eq!(emit("a != b"), "a !== b;");
+    fn equality_becomes_structural() {
+        let result = emit("a == b");
+        assert!(result.contains("__zenEq(a, b)"));
+        let result = emit("a != b");
+        assert!(result.contains("!__zenEq(a, b)"));
     }
 
     // ── If/Else → ternary ────────────────────────────────────────

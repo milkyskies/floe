@@ -79,3 +79,15 @@ fn snapshot_partial_application() {
     let output = compile_fixture("partial_application");
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn snapshot_unit_type() {
+    let output = compile_fixture("unit_type");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_structural_equality() {
+    let output = compile_fixture("structural_equality");
+    insta::assert_snapshot!(output);
+}
