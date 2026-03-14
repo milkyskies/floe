@@ -1,0 +1,413 @@
+use crate::syntax::{SyntaxKind, SyntaxNode};
+
+use super::Formatter;
+
+impl Formatter<'_> {
+    pub(crate) fn fmt_item(&mut self, node: &SyntaxNode) {
+        let has_export = node.children_with_tokens().any(|t| {
+            t.as_token()
+                .is_some_and(|t| t.kind() == SyntaxKind::KW_EXPORT)
+        });
+
+        if has_export {
+            self.write("export ");
+        }
+
+        for child in node.children() {
+            self.fmt_node(&child);
+        }
+    }
+
+    pub(crate) fn fmt_expr_item(&mut self, node: &SyntaxNode) {
+        for child in node.children() {
+            self.fmt_node(&child);
+        }
+        if node.children().next().is_none() {
+            self.fmt_tokens_only(node);
+        }
+    }
+
+    // ── Import ──────────────────────────────────────────────────
+
+    pub(crate) fn fmt_import(&mut self, node: &SyntaxNode) {
+        self.write("import ");
+
+        let specifiers: Vec<_> = node
+            .children()
+            .filter(|c| c.kind() == SyntaxKind::IMPORT_SPECIFIER)
+            .collect();
+
+        if !specifiers.is_empty() {
+            self.write("{ ");
+            for (i, spec) in specifiers.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.fmt_import_specifier(spec);
+            }
+            self.write(" } ");
+        }
+
+        self.write("from ");
+
+        for t in node.children_with_tokens() {
+            if let Some(tok) = t.as_token()
+                && tok.kind() == SyntaxKind::STRING
+            {
+                self.write(tok.text());
+            }
+        }
+    }
+
+    fn fmt_import_specifier(&mut self, node: &SyntaxNode) {
+        let idents: Vec<_> = node
+            .children_with_tokens()
+            .filter_map(|t| t.into_token())
+            .filter(|t| t.kind() == SyntaxKind::IDENT || t.kind() == SyntaxKind::BANNED)
+            .collect();
+
+        if let Some(name) = idents.first() {
+            self.write(name.text());
+        }
+        if idents.len() > 1 {
+            self.write(" as ");
+            if let Some(alias) = idents.last() {
+                self.write(alias.text());
+            }
+        }
+    }
+
+    // ── Const ───────────────────────────────────────────────────
+
+    pub(crate) fn fmt_const(&mut self, node: &SyntaxNode) {
+        self.write("const ");
+
+        let has_lbracket = self.has_token(node, SyntaxKind::L_BRACKET);
+        let has_lbrace_before_eq = self.has_brace_destructuring(node);
+
+        if has_lbracket {
+            self.write("[");
+            let idents = self.collect_idents(node);
+            self.write(&idents.join(", "));
+            self.write("]");
+        } else if has_lbrace_before_eq {
+            self.write("{ ");
+            let idents = self.collect_idents_before_eq(node);
+            self.write(&idents.join(", "));
+            self.write(" }");
+        } else {
+            let idents = self.collect_idents_before_colon_or_eq(node);
+            if let Some(name) = idents.first() {
+                self.write(name);
+            }
+        }
+
+        let type_exprs: Vec<_> = node
+            .children()
+            .filter(|c| c.kind() == SyntaxKind::TYPE_EXPR)
+            .collect();
+        if let Some(type_expr) = type_exprs.first() {
+            self.write(": ");
+            self.fmt_type_expr(type_expr);
+        }
+
+        self.write(" = ");
+
+        let expr = self.find_expr_after_eq(node);
+        if let Some(expr) = expr {
+            self.fmt_node(&expr);
+        } else {
+            self.fmt_token_expr_after_eq(node);
+        }
+    }
+
+    // ── Function ────────────────────────────────────────────────
+
+    pub(crate) fn fmt_function(&mut self, node: &SyntaxNode) {
+        let has_async = self.has_token(node, SyntaxKind::KW_ASYNC);
+        if has_async {
+            self.write("async ");
+        }
+        self.write("function ");
+
+        if let Some(name) = self.first_ident(node) {
+            self.write(&name);
+        }
+
+        self.write("(");
+        let params: Vec<_> = node
+            .children()
+            .filter(|c| c.kind() == SyntaxKind::PARAM)
+            .collect();
+        for (i, param) in params.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.fmt_param(param);
+        }
+        self.write(")");
+
+        let return_type = node.children().find(|c| c.kind() == SyntaxKind::TYPE_EXPR);
+        if let Some(rt) = return_type {
+            self.write(": ");
+            self.fmt_type_expr(&rt);
+        }
+
+        self.write(" ");
+
+        if let Some(block) = node.children().find(|c| c.kind() == SyntaxKind::BLOCK_EXPR) {
+            self.fmt_block(&block);
+        }
+    }
+
+    pub(crate) fn fmt_param(&mut self, node: &SyntaxNode) {
+        if let Some(name) = self.first_ident(node) {
+            self.write(&name);
+        }
+
+        if let Some(type_expr) = node.children().find(|c| c.kind() == SyntaxKind::TYPE_EXPR) {
+            self.write(": ");
+            self.fmt_type_expr(&type_expr);
+        }
+
+        if self.has_token(node, SyntaxKind::EQUAL) {
+            self.write(" = ");
+            self.fmt_token_expr_after_eq(node);
+        }
+    }
+
+    // ── Type Declaration ────────────────────────────────────────
+
+    pub(crate) fn fmt_type_decl(&mut self, node: &SyntaxNode) {
+        if self.has_token(node, SyntaxKind::KW_OPAQUE) {
+            self.write("opaque ");
+        }
+        self.write("type ");
+
+        let idents = self.collect_idents_direct(node);
+        if let Some(name) = idents.first() {
+            self.write(name);
+        }
+
+        if idents.len() > 1 {
+            self.write("<");
+            self.write(&idents[1..].join(", "));
+            self.write(">");
+        }
+
+        self.write(" =");
+
+        for child in node.children() {
+            match child.kind() {
+                SyntaxKind::TYPE_DEF_UNION => {
+                    self.fmt_union(&child);
+                }
+                SyntaxKind::TYPE_DEF_RECORD => {
+                    self.write(" ");
+                    self.fmt_record_def(&child);
+                }
+                SyntaxKind::TYPE_DEF_ALIAS => {
+                    self.write(" ");
+                    self.fmt_type_alias_def(&child);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub(crate) fn fmt_union(&mut self, node: &SyntaxNode) {
+        let variants: Vec<_> = node
+            .children()
+            .filter(|c| c.kind() == SyntaxKind::VARIANT)
+            .collect();
+
+        self.indent += 1;
+        for variant in &variants {
+            self.newline();
+            self.write_indent();
+            self.write("| ");
+            self.fmt_variant(variant);
+        }
+        self.indent -= 1;
+    }
+
+    fn fmt_variant(&mut self, node: &SyntaxNode) {
+        // Skip the "|" ident — it's the union separator, not the variant name
+        let name = node
+            .children_with_tokens()
+            .filter_map(|t| t.into_token())
+            .find(|t| t.kind() == SyntaxKind::IDENT && t.text() != "|")
+            .map(|t| t.text().to_string());
+        if let Some(name) = name {
+            self.write(&name);
+        }
+
+        let fields: Vec<_> = node
+            .children()
+            .filter(|c| c.kind() == SyntaxKind::VARIANT_FIELD)
+            .collect();
+
+        if !fields.is_empty() {
+            self.write("(");
+            for (i, field) in fields.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.fmt_variant_field(field);
+            }
+            self.write(")");
+        }
+    }
+
+    fn fmt_variant_field(&mut self, node: &SyntaxNode) {
+        let has_colon = self.has_token(node, SyntaxKind::COLON);
+        let idents = self.collect_idents(node);
+
+        if has_colon && let Some(name) = idents.first() {
+            self.write(name);
+            self.write(": ");
+        }
+
+        if let Some(type_expr) = node.children().find(|c| c.kind() == SyntaxKind::TYPE_EXPR) {
+            self.fmt_type_expr(&type_expr);
+        }
+    }
+
+    pub(crate) fn fmt_record_def(&mut self, node: &SyntaxNode) {
+        let fields: Vec<_> = node
+            .children()
+            .filter(|c| c.kind() == SyntaxKind::RECORD_FIELD)
+            .collect();
+
+        self.write("{");
+        if fields.is_empty() {
+            self.write("}");
+            return;
+        }
+
+        self.indent += 1;
+        for field in &fields {
+            self.newline();
+            self.write_indent();
+            self.fmt_record_field(field);
+            self.write(",");
+        }
+        self.indent -= 1;
+        self.newline();
+        self.write_indent();
+        self.write("}");
+    }
+
+    pub(crate) fn fmt_record_field(&mut self, node: &SyntaxNode) {
+        if let Some(name) = self.first_ident(node) {
+            self.write(&name);
+        }
+        self.write(": ");
+        if let Some(type_expr) = node.children().find(|c| c.kind() == SyntaxKind::TYPE_EXPR) {
+            self.fmt_type_expr(&type_expr);
+        }
+
+        if self.has_token(node, SyntaxKind::EQUAL) {
+            self.write(" = ");
+            self.fmt_token_expr_after_eq(node);
+        }
+    }
+
+    pub(crate) fn fmt_type_alias_def(&mut self, node: &SyntaxNode) {
+        if let Some(type_expr) = node.children().find(|c| c.kind() == SyntaxKind::TYPE_EXPR) {
+            self.fmt_type_expr(&type_expr);
+        }
+    }
+
+    // ── Type Expressions ────────────────────────────────────────
+
+    pub(crate) fn fmt_type_expr(&mut self, node: &SyntaxNode) {
+        let idents = self.collect_idents(node);
+        let has_fat_arrow = self.has_token(node, SyntaxKind::FAT_ARROW);
+        let has_lbracket = self.has_token(node, SyntaxKind::L_BRACKET);
+        let has_lparen = self.has_token(node, SyntaxKind::L_PAREN);
+        let has_record_fields = node
+            .children()
+            .any(|c| c.kind() == SyntaxKind::RECORD_FIELD);
+        let child_type_exprs: Vec<_> = node
+            .children()
+            .filter(|c| c.kind() == SyntaxKind::TYPE_EXPR)
+            .collect();
+
+        // Unit type: ()
+        if has_lparen && idents.is_empty() && !has_fat_arrow && child_type_exprs.is_empty() {
+            self.write("()");
+            return;
+        }
+
+        // Function type: (params) => ReturnType
+        if has_fat_arrow {
+            self.write("(");
+            let param_count = child_type_exprs.len().saturating_sub(1);
+            for (i, te) in child_type_exprs.iter().enumerate() {
+                if i == param_count {
+                    break;
+                }
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.fmt_type_expr(te);
+            }
+            self.write(") => ");
+            if let Some(ret) = child_type_exprs.last() {
+                self.fmt_type_expr(ret);
+            }
+            return;
+        }
+
+        // Tuple: [T, U]
+        if has_lbracket {
+            self.write("[");
+            for (i, te) in child_type_exprs.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.fmt_type_expr(te);
+            }
+            self.write("]");
+            return;
+        }
+
+        // Record type
+        if has_record_fields {
+            let fields: Vec<_> = node
+                .children()
+                .filter(|c| c.kind() == SyntaxKind::RECORD_FIELD)
+                .collect();
+            self.write("{ ");
+            for (i, field) in fields.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.fmt_record_field(field);
+            }
+            self.write(" }");
+            return;
+        }
+
+        // Named type with dots
+        let has_dot = self.has_token(node, SyntaxKind::DOT);
+        if has_dot {
+            self.write(&idents.join("."));
+        } else if let Some(name) = idents.first() {
+            self.write(name);
+        }
+
+        // Type args
+        if !child_type_exprs.is_empty() {
+            self.write("<");
+            for (i, te) in child_type_exprs.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.fmt_type_expr(te);
+            }
+            self.write(">");
+        }
+    }
+}

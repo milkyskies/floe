@@ -1,9 +1,13 @@
 pub mod checker;
 pub mod codegen;
+pub mod cst;
 pub mod diagnostic;
+pub mod formatter;
 pub mod interop;
 pub mod lexer;
+pub mod lower;
 pub mod lsp;
 pub mod parser;
 pub mod sourcemap;
 pub mod stdlib;
+pub mod syntax;
