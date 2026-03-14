@@ -109,3 +109,9 @@ fn snapshot_try_expr() {
     let output = compile_fixture("try_expr");
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn snapshot_trusted_import() {
+    let output = compile_fixture("trusted_import");
+    insta::assert_snapshot!(output);
+}

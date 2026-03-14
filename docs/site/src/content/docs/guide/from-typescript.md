@@ -138,7 +138,17 @@ match result {
 }
 ```
 
-The `try` keyword wraps any expression in a try/catch and returns a `Result<T, Error>`. Use it at the boundary when calling TypeScript functions that might throw.
+The `try` keyword wraps any expression in a try/catch and returns a `Result<T, Error>`. All TypeScript imports are treated as potentially throwing by default — the compiler requires `try` when calling them. For TS functions you know won't throw, use `trusted`:
+
+```floe
+import { trusted capitalize, fetchUser } from "some-lib"
+
+capitalize("hello")          // string, no try needed
+const user = try fetchUser(id)  // Result<User, Error>
+
+// Or mark the whole import as trusted:
+import trusted { capitalize, slugify } from "string-utils"
+```
 
 ### Option instead of null
 
