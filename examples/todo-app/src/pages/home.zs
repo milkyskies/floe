@@ -90,7 +90,7 @@ export function HomePage(): JSX.Element {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => match e.key {
                     "Enter" -> handleAdd(),
-                    _ -> {},
+                    _ -> (),
                 }}
                 placeholder="What needs to be done?"
                 className="flex-1 rounded-lg bg-zinc-800 px-4 py-2 text-zinc-100 placeholder-zinc-500 outline-none ring-1 ring-zinc-700 focus:ring-indigo-500"

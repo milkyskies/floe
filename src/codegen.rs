@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::parser::ast::*;
 use crate::stdlib::StdlibRegistry;
 
@@ -14,6 +16,10 @@ pub struct Codegen {
     has_jsx: bool,
     needs_deep_equal: bool,
     stdlib: StdlibRegistry,
+    /// Names that are zero-arg union variants (e.g. "All", "Empty")
+    unit_variants: HashSet<String>,
+    /// Maps variant name -> (union_type_name, field_names)
+    variant_info: HashMap<String, (String, Vec<String>)>,
 }
 
 impl Codegen {
@@ -24,11 +30,33 @@ impl Codegen {
             has_jsx: false,
             needs_deep_equal: false,
             stdlib: StdlibRegistry::new(),
+            unit_variants: HashSet::new(),
+            variant_info: HashMap::new(),
         }
     }
 
     /// Generate TypeScript from a ZenScript program.
     pub fn generate(mut self, program: &Program) -> CodegenOutput {
+        // First pass: collect union variant info
+        for item in &program.items {
+            if let ItemKind::TypeDecl(decl) = &item.kind
+                && let TypeDef::Union(variants) = &decl.def
+            {
+                for variant in variants {
+                    let field_names: Vec<String> = variant
+                        .fields
+                        .iter()
+                        .filter_map(|f| f.name.clone())
+                        .collect();
+                    if variant.fields.is_empty() {
+                        self.unit_variants.insert(variant.name.clone());
+                    }
+                    self.variant_info
+                        .insert(variant.name.clone(), (decl.name.clone(), field_names));
+                }
+            }
+        }
+
         for (i, item) in program.items.iter().enumerate() {
             if i > 0 {
                 self.newline();
@@ -293,6 +321,12 @@ impl Codegen {
                     return;
                 }
 
+                // bool → boolean in TypeScript
+                if name == "bool" {
+                    self.push("boolean");
+                    return;
+                }
+
                 self.push(name);
                 if !type_args.is_empty() {
                     self.push("<");
@@ -361,7 +395,16 @@ impl Codegen {
                 self.push("`");
             }
             ExprKind::Bool(b) => self.push(if *b { "true" } else { "false" }),
-            ExprKind::Identifier(name) => self.push(name),
+            ExprKind::Identifier(name) => {
+                if self.unit_variants.contains(name.as_str()) {
+                    // Zero-arg union variant: `All` → `{ tag: "All" }`
+                    self.push("{ tag: \"");
+                    self.push(name);
+                    self.push("\" }");
+                } else {
+                    self.push(name);
+                }
+            }
             ExprKind::Placeholder => self.push("_"),
 
             ExprKind::Binary { left, op, right } => match op {
@@ -425,12 +468,26 @@ impl Codegen {
             }
 
             // Constructor: `User(name: "Ry", email: e)` → `{ name: "Ry", email: e }`
+            // Union variant: `Valid(text)` → `{ tag: "Valid", text: text }`
             ExprKind::Construct {
-                type_name: _,
+                type_name,
                 spread,
                 args,
             } => {
+                let variant_field_names = self
+                    .variant_info
+                    .get(type_name.as_str())
+                    .map(|(_, fields)| fields.clone());
+                let is_variant = variant_field_names.is_some();
                 self.push("{ ");
+                if is_variant {
+                    self.push("tag: \"");
+                    self.push(type_name);
+                    self.push("\"");
+                    if !args.is_empty() || spread.is_some() {
+                        self.push(", ");
+                    }
+                }
                 if let Some(spread_expr) = spread {
                     self.push("...");
                     self.emit_expr(spread_expr);
@@ -438,7 +495,12 @@ impl Codegen {
                         self.push(", ");
                     }
                 }
-                self.emit_named_fields(args);
+                // For variant constructors with positional args, use field names
+                if let Some(ref field_names) = variant_field_names {
+                    self.emit_construct_fields(args, field_names);
+                } else {
+                    self.emit_named_fields(args);
+                }
                 self.push(" }");
             }
 
@@ -572,24 +634,26 @@ impl Codegen {
             && let ExprKind::Identifier(module) = &object.kind
             && let Some(stdlib_fn) = self.stdlib.lookup(module, field)
         {
-            // Collect emitted args
-            let arg_strings: Vec<String> = args
-                .iter()
-                .map(|arg| {
-                    let mut sub = Codegen::new();
-                    match arg {
-                        Arg::Positional(e) => sub.emit_expr(e),
-                        Arg::Named { value, .. } => sub.emit_expr(value),
-                    }
-                    sub.output
-                })
-                .collect();
-
-            if stdlib_fn.codegen.contains("__zenEq") {
+            let template = stdlib_fn.codegen.to_string();
+            if template.contains("__zenEq") {
                 self.needs_deep_equal = true;
             }
 
-            Some(expand_codegen_template(stdlib_fn.codegen, &arg_strings))
+            // Collect emitted args using sub-codegen that shares state
+            let mut arg_strings = Vec::new();
+            for arg in args {
+                let mut sub = self.sub_codegen();
+                match arg {
+                    Arg::Positional(e) => sub.emit_expr(e),
+                    Arg::Named { value, .. } => sub.emit_expr(value),
+                }
+                if sub.needs_deep_equal {
+                    self.needs_deep_equal = true;
+                }
+                arg_strings.push(sub.output);
+            }
+
+            Some(expand_codegen_template(&template, &arg_strings))
         } else {
             None
         }
@@ -606,26 +670,33 @@ impl Codegen {
             && let ExprKind::Identifier(module) = &object.kind
             && let Some(stdlib_fn) = self.stdlib.lookup(module, field)
         {
+            let template = stdlib_fn.codegen.to_string();
+            if template.contains("__zenEq") {
+                self.needs_deep_equal = true;
+            }
+
             // First arg is the piped value
-            let mut sub = Codegen::new();
+            let mut sub = self.sub_codegen();
             sub.emit_expr(left);
+            if sub.needs_deep_equal {
+                self.needs_deep_equal = true;
+            }
             let mut arg_strings = vec![sub.output];
 
             // Remaining args
             for arg in extra_args {
-                let mut sub = Codegen::new();
+                let mut sub = self.sub_codegen();
                 match arg {
                     Arg::Positional(e) => sub.emit_expr(e),
                     Arg::Named { value, .. } => sub.emit_expr(value),
                 }
+                if sub.needs_deep_equal {
+                    self.needs_deep_equal = true;
+                }
                 arg_strings.push(sub.output);
             }
 
-            if stdlib_fn.codegen.contains("__zenEq") {
-                self.needs_deep_equal = true;
-            }
-
-            Some(expand_codegen_template(stdlib_fn.codegen, &arg_strings))
+            Some(expand_codegen_template(&template, &arg_strings))
         } else {
             None
         }
@@ -851,16 +922,28 @@ impl Codegen {
     fn emit_match_body(&mut self, subject: &Expr, pattern: &Pattern, body: &Expr) {
         // For patterns with bindings, wrap in an IIFE to introduce variables
         let bindings = collect_bindings(subject, pattern, &|s| self.expr_to_string(s));
-        if bindings.is_empty() {
-            self.emit_expr(body);
-        } else {
+        let needs_iife = !bindings.is_empty() || matches!(body.kind, ExprKind::Block(_));
+        if needs_iife {
             self.push("(() => { ");
             for (name, access) in &bindings {
                 self.push(&format!("const {name} = {access}; "));
             }
-            self.push("return ");
+            if matches!(body.kind, ExprKind::Block(_)) {
+                // For block bodies, emit statements directly inside the IIFE
+                if let ExprKind::Block(items) = &body.kind {
+                    for item in items {
+                        self.emit_item(item);
+                        self.push(" ");
+                    }
+                }
+            } else {
+                self.push("return ");
+                self.emit_expr(body);
+                self.push(";");
+            }
+            self.push(" })()");
+        } else {
             self.emit_expr(body);
-            self.push("; })()");
         }
     }
 
@@ -873,6 +956,30 @@ impl Codegen {
     }
 
     // ── Constructor → Object Literal ─────────────────────────────
+
+    /// Emit construct fields, mapping positional args to field names from the type definition.
+    fn emit_construct_fields(&mut self, args: &[Arg], field_names: &[String]) {
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                self.push(", ");
+            }
+            match arg {
+                Arg::Named { label, value } => {
+                    self.push(label);
+                    self.push(": ");
+                    self.emit_expr(value);
+                }
+                Arg::Positional(expr) => {
+                    // Map positional args to field names
+                    if let Some(name) = field_names.get(i) {
+                        self.push(name);
+                        self.push(": ");
+                    }
+                    self.emit_expr(expr);
+                }
+            }
+        }
+    }
 
     fn emit_named_fields(&mut self, args: &[Arg]) {
         for (i, arg) in args.iter().enumerate() {
@@ -1011,9 +1118,22 @@ impl Codegen {
     }
 
     fn expr_to_string(&self, expr: &Expr) -> String {
-        let mut cg = Codegen::new();
+        let mut cg = self.sub_codegen();
         cg.emit_expr(expr);
         cg.output
+    }
+
+    /// Create a sub-codegen that shares type info but has its own output buffer.
+    fn sub_codegen(&self) -> Codegen {
+        Codegen {
+            output: String::new(),
+            indent: 0,
+            has_jsx: false,
+            needs_deep_equal: false,
+            stdlib: StdlibRegistry::new(),
+            unit_variants: self.unit_variants.clone(),
+            variant_info: self.variant_info.clone(),
+        }
     }
 }
 

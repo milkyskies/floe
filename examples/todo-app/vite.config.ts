@@ -13,4 +13,8 @@ export default defineConfig({
   resolve: {
     extensions: [".zs", ".ts", ".tsx", ".js", ".jsx"],
   },
+  esbuild: {
+    include: /\.(tsx?|jsx?|zs)$/,
+    loader: "tsx",
+  },
 });
