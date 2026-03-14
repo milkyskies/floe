@@ -8,6 +8,9 @@ pub use types::Type;
 
 use std::collections::{HashMap, HashSet};
 
+/// Maps expression spans (start, end) to their resolved types.
+pub type ExprTypeMap = HashMap<(usize, usize), Type>;
+
 use crate::diagnostic::Diagnostic;
 use crate::lexer::span::Span;
 use crate::parser::ast::*;
@@ -31,6 +34,9 @@ pub struct Checker {
     imported_names: Vec<(String, Span)>,
     /// Standard library function registry.
     stdlib: StdlibRegistry,
+    /// Maps expression spans (start, end) to their resolved types.
+    /// Used by codegen for type-directed pipe resolution.
+    expr_types: ExprTypeMap,
 }
 
 impl Default for Checker {
@@ -50,20 +56,35 @@ impl Checker {
             defined_names: Vec::new(),
             imported_names: Vec::new(),
             stdlib: StdlibRegistry::new(),
+            expr_types: HashMap::new(),
         }
     }
 
     /// Check a program and return diagnostics.
     pub fn check(self, program: &Program) -> Vec<Diagnostic> {
-        self.check_with_types(program).0
+        self.check_full(program).0
     }
 
-    /// Check a program and return (diagnostics, type_map).
-    /// The type_map maps variable/function names to their inferred type display names.
-    pub fn check_with_types(
+    /// Check a program and return (diagnostics, expr_type_map).
+    /// The expr_type_map maps expression spans (start, end) to their resolved types,
+    /// used by codegen for type-directed pipe resolution.
+    pub fn check_full(self, program: &Program) -> (Vec<Diagnostic>, ExprTypeMap) {
+        let (diags, _, expr_types) = self.check_all(program);
+        (diags, expr_types)
+    }
+
+    /// Check a program and return (diagnostics, name_type_map).
+    /// The name_type_map maps variable/function names to their inferred type display names.
+    pub fn check_with_types(self, program: &Program) -> (Vec<Diagnostic>, HashMap<String, String>) {
+        let (diags, name_map, _) = self.check_all(program);
+        (diags, name_map)
+    }
+
+    /// Internal: run all checks and return all maps.
+    fn check_all(
         mut self,
         program: &Program,
-    ) -> (Vec<Diagnostic>, HashMap<String, String>) {
+    ) -> (Vec<Diagnostic>, HashMap<String, String>, ExprTypeMap) {
         // First pass: register all type declarations
         for item in &program.items {
             if let ItemKind::TypeDecl(decl) = &item.kind {
@@ -109,7 +130,7 @@ impl Checker {
             .map(|(name, ty)| (name.clone(), ty.display_name()))
             .collect();
 
-        (self.diagnostics, type_map)
+        (self.diagnostics, type_map, self.expr_types)
     }
 
     fn fresh_type_var(&mut self) -> Type {

@@ -18,4 +18,8 @@ function adults(self: Array<User>): Array<User> {
   return self.filter((_x) => _x.age >= 18);
 }
 
-const names = [{ name: "Ryan", age: 25, active: true }].filter((_x) => _x.active).map((_x) => _x.name);
+const _filtered = [{ name: "Ryan", age: 25, active: true }].filter((_x) => _x.active);
+
+const _arrLen = [1, 2, 3].length;
+
+const _strLen = "hello".length;

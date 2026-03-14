@@ -6,6 +6,7 @@ mod tests;
 
 use std::collections::{HashMap, HashSet};
 
+use crate::checker::ExprTypeMap;
 use crate::parser::ast::*;
 use crate::stdlib::StdlibRegistry;
 
@@ -28,6 +29,9 @@ pub struct Codegen {
     variant_info: HashMap<String, (String, Vec<String>)>,
     /// Locally defined function/const names - these shadow stdlib in pipe resolution
     local_names: HashSet<String>,
+    /// Expression type map from the checker, keyed by span (start, end).
+    /// Used for type-directed pipe resolution.
+    expr_types: ExprTypeMap,
 }
 
 impl Codegen {
@@ -41,6 +45,15 @@ impl Codegen {
             unit_variants: HashSet::new(),
             variant_info: HashMap::new(),
             local_names: HashSet::new(),
+            expr_types: HashMap::new(),
+        }
+    }
+
+    /// Create a codegen with expression type information from the checker.
+    pub fn with_expr_types(expr_types: ExprTypeMap) -> Self {
+        Self {
+            expr_types,
+            ..Self::new()
         }
     }
 
@@ -508,6 +521,7 @@ impl Codegen {
             unit_variants: self.unit_variants.clone(),
             variant_info: self.variant_info.clone(),
             local_names: self.local_names.clone(),
+            expr_types: self.expr_types.clone(),
         }
     }
 }

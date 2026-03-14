@@ -25,6 +25,9 @@ for Array<User> {
 }
 
 // Type-directed pipe resolution: bare stdlib names work in pipes
-const names = [User(name: "Ryan", age: 25, active: true)]
+const _filtered = [User(name: "Ryan", age: 25, active: true)]
   |> filter(.active)
-  |> map(.name)
+
+// Disambiguation: `length` resolves to Array.length or String.length based on type
+const _arrLen = [1, 2, 3] |> length
+const _strLen = "hello" |> length

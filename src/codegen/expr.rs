@@ -363,8 +363,9 @@ impl Codegen {
         }
     }
 
-    /// Try to resolve a bare function name in pipe context via stdlib lookup.
-    /// e.g., `arr |> map(fn)` → looks up "map" in stdlib, uses codegen template.
+    /// Try to resolve a bare function name in pipe context via type-directed stdlib lookup.
+    /// Uses the checker's type map to determine which stdlib module to use.
+    /// e.g., `arr |> length` → left is Array → use Array.length template.
     fn try_emit_bare_stdlib_pipe(
         &mut self,
         left: &Expr,
@@ -376,36 +377,58 @@ impl Codegen {
             if self.local_names.contains(name.as_str()) {
                 return None;
             }
-            let matches = self.stdlib.lookup_by_name(name);
-            if let Some(stdlib_fn) = matches.first() {
-                let template = stdlib_fn.codegen.to_string();
-                if template.contains("__zenEq") {
-                    self.needs_deep_equal = true;
-                }
 
+            // Resolve stdlib module from the left-hand type
+            let stdlib_fn =
+                if let Some(left_type) = self.expr_types.get(&(left.span.start, left.span.end)) {
+                    // Type-directed: use the left's type to pick the right module
+                    let module = Self::type_to_stdlib_module(left_type)?;
+                    self.stdlib.lookup(module, name)
+                } else {
+                    // Fallback: no type info, pick first match
+                    self.stdlib.lookup_by_name(name).into_iter().next()
+                }?;
+
+            let template = stdlib_fn.codegen.to_string();
+            if template.contains("__zenEq") {
+                self.needs_deep_equal = true;
+            }
+
+            let mut sub = self.sub_codegen();
+            sub.emit_expr(left);
+            if sub.needs_deep_equal {
+                self.needs_deep_equal = true;
+            }
+            let mut arg_strings = vec![sub.output];
+
+            for arg in extra_args {
                 let mut sub = self.sub_codegen();
-                sub.emit_expr(left);
+                match arg {
+                    Arg::Positional(e) => sub.emit_expr(e),
+                    Arg::Named { value, .. } => sub.emit_expr(value),
+                }
                 if sub.needs_deep_equal {
                     self.needs_deep_equal = true;
                 }
-                let mut arg_strings = vec![sub.output];
-
-                for arg in extra_args {
-                    let mut sub = self.sub_codegen();
-                    match arg {
-                        Arg::Positional(e) => sub.emit_expr(e),
-                        Arg::Named { value, .. } => sub.emit_expr(value),
-                    }
-                    if sub.needs_deep_equal {
-                        self.needs_deep_equal = true;
-                    }
-                    arg_strings.push(sub.output);
-                }
-
-                return Some(expand_codegen_template(&template, &arg_strings));
+                arg_strings.push(sub.output);
             }
+
+            return Some(expand_codegen_template(&template, &arg_strings));
         }
         None
+    }
+
+    /// Map a checker Type to the corresponding stdlib module name.
+    fn type_to_stdlib_module(ty: &crate::checker::Type) -> Option<&'static str> {
+        use crate::checker::Type;
+        match ty {
+            Type::Array(_) => Some("Array"),
+            Type::String => Some("String"),
+            Type::Number => Some("Number"),
+            Type::Option(_) => Some("Option"),
+            Type::Result { .. } => Some("Result"),
+            _ => None,
+        }
     }
 
     fn emit_pipe(&mut self, left: &Expr, right: &Expr) {

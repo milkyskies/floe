@@ -575,3 +575,41 @@ fn stdlib_pipe_chain() {
 fn stdlib_pipe_string() {
     assert_eq!(emit(r#""  hi  " |> String.trim"#), r#""  hi  ".trim();"#);
 }
+
+// ── Type-directed pipe resolution ───────────────────────────
+
+fn emit_with_types(input: &str) -> String {
+    let program = Parser::new(input).parse_program().unwrap_or_else(|errs| {
+        panic!(
+            "parse failed:\n{}",
+            errs.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    });
+    let (_, expr_types) = crate::checker::Checker::new().check_full(&program);
+    Codegen::with_expr_types(expr_types)
+        .generate(&program)
+        .code
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn type_directed_array_length() {
+    let result = emit_with_types("const _x = [1, 2, 3] |> length");
+    assert_eq!(result, "const _x = [1, 2, 3].length;");
+}
+
+#[test]
+fn type_directed_string_length() {
+    let result = emit_with_types(r#"const _x = "hello" |> length"#);
+    assert_eq!(result, r#"const _x = "hello".length;"#);
+}
+
+#[test]
+fn type_directed_array_filter() {
+    let result = emit_with_types(r#"const _x = [1, 2, 3] |> filter(|x| x > 1)"#);
+    assert_eq!(result, "const _x = [1, 2, 3].filter((x) => x > 1);");
+}

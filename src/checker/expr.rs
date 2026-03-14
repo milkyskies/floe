@@ -4,6 +4,13 @@ use super::*;
 
 impl Checker {
     pub(super) fn check_expr(&mut self, expr: &Expr) -> Type {
+        let ty = self.check_expr_inner(expr);
+        self.expr_types
+            .insert((expr.span.start, expr.span.end), ty.clone());
+        ty
+    }
+
+    fn check_expr_inner(&mut self, expr: &Expr) -> Type {
         match &expr.kind {
             ExprKind::Number(_) => Type::Number,
             ExprKind::String(_) => Type::String,
