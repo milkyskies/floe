@@ -1501,4 +1501,206 @@ mod tests {
     fn array_literal() {
         assert_eq!(emit("[1, 2, 3]"), "[1, 2, 3];");
     }
+
+    // ── Stdlib: Array ────────────────────────────────────────────
+
+    #[test]
+    fn stdlib_array_sort() {
+        assert_eq!(
+            emit("Array.sort([3, 1, 2])"),
+            "[...[3, 1, 2]].sort((a, b) => a - b);"
+        );
+    }
+
+    #[test]
+    fn stdlib_array_map() {
+        assert_eq!(
+            emit("Array.map([1, 2], (n) => n * 2)"),
+            "[1, 2].map((n) => n * 2);"
+        );
+    }
+
+    #[test]
+    fn stdlib_array_filter() {
+        assert_eq!(
+            emit("Array.filter([1, 2, 3], (n) => n > 1)"),
+            "[1, 2, 3].filter((n) => n > 1);"
+        );
+    }
+
+    #[test]
+    fn stdlib_array_head() {
+        assert_eq!(emit("Array.head([1, 2, 3])"), "[1, 2, 3][0];");
+    }
+
+    #[test]
+    fn stdlib_array_last() {
+        assert_eq!(
+            emit("Array.last([1, 2, 3])"),
+            "[1, 2, 3][[1, 2, 3].length - 1];"
+        );
+    }
+
+    #[test]
+    fn stdlib_array_reverse() {
+        assert_eq!(
+            emit("Array.reverse([1, 2, 3])"),
+            "[...[1, 2, 3]].reverse();"
+        );
+    }
+
+    #[test]
+    fn stdlib_array_take() {
+        assert_eq!(emit("Array.take([1, 2, 3], 2)"), "[1, 2, 3].slice(0, 2);");
+    }
+
+    #[test]
+    fn stdlib_array_drop() {
+        assert_eq!(emit("Array.drop([1, 2, 3], 1)"), "[1, 2, 3].slice(1);");
+    }
+
+    #[test]
+    fn stdlib_array_length() {
+        assert_eq!(emit("Array.length([1, 2])"), "[1, 2].length;");
+    }
+
+    #[test]
+    fn stdlib_array_contains() {
+        let result = emit("Array.contains([1, 2], 2)");
+        assert!(result.contains("__zenEq"));
+        assert!(result.contains(".some("));
+    }
+
+    // ── Stdlib: Option ───────────────────────────────────────────
+
+    #[test]
+    fn stdlib_option_map() {
+        let result = emit("Option.map(Some(1), (n) => n * 2)");
+        assert!(result.contains("!== undefined"));
+    }
+
+    #[test]
+    fn stdlib_option_unwrap_or() {
+        let result = emit("Option.unwrapOr(None, 0)");
+        assert!(result.contains("!== undefined"));
+        assert!(result.contains(": 0"));
+    }
+
+    #[test]
+    fn stdlib_option_is_some() {
+        assert_eq!(emit("Option.isSome(Some(1))"), "1 !== undefined;");
+    }
+
+    #[test]
+    fn stdlib_option_is_none() {
+        assert_eq!(emit("Option.isNone(None)"), "undefined === undefined;");
+    }
+
+    // ── Stdlib: Result ───────────────────────────────────────────
+
+    #[test]
+    fn stdlib_result_is_ok() {
+        let result = emit("Result.isOk(Ok(1))");
+        assert!(result.contains(".ok;"));
+    }
+
+    #[test]
+    fn stdlib_result_is_err() {
+        let result = emit(r#"Result.isErr(Err("fail"))"#);
+        assert!(result.contains("!"));
+        assert!(result.contains(".ok;"));
+    }
+
+    #[test]
+    fn stdlib_result_to_option() {
+        let result = emit("Result.toOption(Ok(42))");
+        assert!(result.contains(".ok ?"));
+        assert!(result.contains("undefined"));
+    }
+
+    // ── Stdlib: String ───────────────────────────────────────────
+
+    #[test]
+    fn stdlib_string_trim() {
+        assert_eq!(emit(r#"String.trim("  hi  ")"#), r#""  hi  ".trim();"#);
+    }
+
+    #[test]
+    fn stdlib_string_to_upper() {
+        assert_eq!(
+            emit(r#"String.toUpper("hello")"#),
+            r#""hello".toUpperCase();"#
+        );
+    }
+
+    #[test]
+    fn stdlib_string_contains() {
+        assert_eq!(
+            emit(r#"String.contains("hello", "el")"#),
+            r#""hello".includes("el");"#
+        );
+    }
+
+    #[test]
+    fn stdlib_string_split() {
+        assert_eq!(emit(r#"String.split("a,b", ",")"#), r#""a,b".split(",");"#);
+    }
+
+    #[test]
+    fn stdlib_string_length() {
+        assert_eq!(emit(r#"String.length("hi")"#), r#""hi".length;"#);
+    }
+
+    // ── Stdlib: Number ───────────────────────────────────────────
+
+    #[test]
+    fn stdlib_number_clamp() {
+        assert_eq!(
+            emit("Number.clamp(15, 0, 10)"),
+            "Math.min(Math.max(15, 0), 10);"
+        );
+    }
+
+    #[test]
+    fn stdlib_number_parse() {
+        let result = emit(r#"Number.parse("42")"#);
+        assert!(result.contains("Number.isNaN"));
+        assert!(result.contains("ok: true"));
+        assert!(result.contains("ok: false"));
+    }
+
+    #[test]
+    fn stdlib_number_is_finite() {
+        assert_eq!(emit("Number.isFinite(42)"), "Number.isFinite(42);");
+    }
+
+    // ── Stdlib: Pipes ────────────────────────────────────────────
+
+    #[test]
+    fn stdlib_pipe_bare() {
+        assert_eq!(
+            emit("[3, 1, 2] |> Array.sort"),
+            "[...[3, 1, 2]].sort((a, b) => a - b);"
+        );
+    }
+
+    #[test]
+    fn stdlib_pipe_with_args() {
+        assert_eq!(
+            emit("[1, 2, 3] |> Array.map((n) => n * 2)"),
+            "[1, 2, 3].map((n) => n * 2);"
+        );
+    }
+
+    #[test]
+    fn stdlib_pipe_chain() {
+        let result = emit("[1, 2, 3] |> Array.filter((n) => n > 1) |> Array.reverse");
+        assert!(result.contains(".filter("));
+        assert!(result.contains(".reverse()"));
+    }
+
+    #[test]
+    fn stdlib_pipe_string() {
+        assert_eq!(emit(r#""  hi  " |> String.trim"#), r#""  hi  ".trim();"#);
+    }
 }
