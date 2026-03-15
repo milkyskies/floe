@@ -60,7 +60,12 @@ async fn fetchPosts(url: string) -> Result<Array<Post>, Error> {
     const res = try await fetch(url)?
     const json = try await res.json()?
     const parsed = try PostArraySchema.parse(json)?
-    return Ok(parsed)
+    return Ok(parsed |> Array.map(|p| Post(
+        id: p.id,
+        title: p.title,
+        body: p.body,
+        userId: p.userId,
+    )))
 }
 
 fn PostAuthor(props: { userId: number }) -> JSX.Element {

@@ -235,7 +235,15 @@ fn generate_probe(
                 if let Some(cn) = &callee_name {
                     let root = cn.split('.').next().unwrap_or("");
                     if imported_names.contains_key(cn) || imported_names.contains_key(root) {
-                        local_const_exprs.insert(name.clone(), expr_to_ts_approx(inner));
+                        let mut ts_expr = expr_to_ts_approx(inner);
+                        // Substitute any local const references in the expression
+                        // e.g. z.array(PostSchema) → z.array(z.object({...}))
+                        for (const_name, const_expr) in &local_const_exprs {
+                            if ts_expr.contains(const_name.as_str()) {
+                                ts_expr = ts_expr.replace(const_name.as_str(), const_expr);
+                            }
+                        }
+                        local_const_exprs.insert(name.clone(), ts_expr);
                     }
                 }
             }
@@ -301,11 +309,13 @@ fn generate_probe(
                     if let Some(obj_expr) = local_const_exprs.get(obj_name) {
                         let ts_args: Vec<String> = args.iter().map(arg_to_ts_approx).collect();
                         let binding_name = const_binding_name(&decl.binding);
+                        // Use a separate counter to avoid conflicting with _rN indices
+                        let inlined_id = format!("inlined_{}", lines.len());
                         lines.push(format!(
-                            "export const __probe_{binding_name}_{probe_index} = {obj_expr}.{method}({});",
+                            "export const __probe_{binding_name}_{inlined_id} = {obj_expr}.{method}({});",
                             ts_args.join(", "),
                         ));
-                        probe_index += 1;
+                        // Don't increment probe_index — these don't use _rN naming
                         continue;
                     }
                 }

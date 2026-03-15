@@ -1420,6 +1420,9 @@ impl Checker {
                 self.types_compatible(o1, o2) && self.types_compatible(e1, e2)
             }
             (Type::Option(a), Type::Option(b)) => self.types_compatible(a, b),
+            (Type::Array(_), Type::Array(b)) if matches!(**b, Type::Unknown) => {
+                true // empty array [] is compatible with any Array<T>
+            }
             (Type::Array(a), Type::Array(b)) => self.types_compatible(a, b),
             (Type::Tuple(a), Type::Tuple(b)) => {
                 a.len() == b.len()
