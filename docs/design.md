@@ -57,6 +57,7 @@ All four of TypeScript's `?` uses (`?.`, `??`, `?:`, `? :`) are removed. `?` now
 | Partial application | `add(10, _)` | `(x) => add(10, x)` |
 | Match expression | `match x { ... }` | exhaustive if/else chain |
 | Match with ranges | `match n { 1..10 -> ... }` | range check |
+| Match with string patterns | `"/users/{id}" -> f(id)` | regex-based matching with captures |
 | Match with destructuring | `Click(el, { x, y }) -> ...` | nested destructuring |
 | Result type | built-in `Ok(v)` / `Err(e)` | `{ ok: true, value } / { ok: false, error }` |
 | Option type | built-in `Some(v)` / `None` | `v / undefined` |
@@ -79,6 +80,7 @@ All four of TypeScript's `?` uses (`?.`, `??`, `?:`, `? :`) are removed. `?` now
 | Tuple types | `(number, string)`, `(1, "a")` | `readonly [number, string]`, `[1, "a"] as const` |
 | Tuple destructuring | `const (x, y) = pair` | `const [x, y] = pair` |
 | Tuple match patterns | `(0, _) -> ...` | index-based match conditions |
+| tap | `x \|> tap(Console.log)` | IIFE: calls fn, returns value unchanged |
 | Immutable sort | `Array.sort` returns new array | sorted copy, no mutation |
 | Strict parse | `Number.parse("123")` returns `Result` | no silent `NaN` or partial parse |
 
@@ -102,6 +104,7 @@ All four of TypeScript's `?` uses (`?.`, `??`, `?:`, `? :`) are removed. `?` now
 | `void` | Not a real type, can't use in generics | Unit type `()` — a real value |
 | `=>` | Two syntaxes for functions is one too many | `\|x\| expr` for anonymous functions |
 | `function` | Verbose keyword | `fn` |
+| `if`/`else` | Redundant control flow | `match` expression |
 
 ---
 
@@ -131,6 +134,12 @@ todos |> Array.map(.text)              // map(todos, x => x.text)
 // Pipe lambdas — |x| for when you need a named param
 todos |> Array.map(|t| Todo(..t, done: true))
 items |> Array.reduce(|acc, x| acc + x.price, 0)
+
+// tap — call a function for side effects, pass value through
+orders
+  |> Array.filter(.active)
+  |> tap(Console.log)              // logs filtered orders, passes through
+  |> Array.map(.total)
 
 // Pipes in JSX
 <ul>
@@ -180,6 +189,14 @@ match action {
   Click(el, { x, y })          -> handleClick(el, x, y)
   KeyPress("s", { ctrl: true }) -> save()
   KeyPress(key, _)              -> insertChar(key)
+}
+
+// String pattern matching with captures
+match url {
+  "/users/{id}"          -> fetchUser(id)
+  "/users/{id}/posts"    -> fetchPosts(id)
+  "/about"               -> aboutPage()
+  _                      -> notFound()
 }
 
 // Inline match in JSX props
@@ -831,7 +848,13 @@ enum Pattern {
     Range { start: Literal, end: Literal },
     Variant { name: String, bindings: Vec<Pattern> },  // recursive — enables multi-depth matching
     Record { fields: Vec<(String, Pattern)> },
+    StringPattern { segments: Vec<StringPatternSegment> },  // "/users/{id}" — regex-based matching
     Wildcard,
+}
+
+enum StringPatternSegment {
+    Literal(String),   // static text: "/users/"
+    Capture(String),   // variable binding: "id"
 }
 ```
 
@@ -952,6 +975,7 @@ Emits clean, readable `.tsx`. Zero runtime imports.
 | `fn f(x: T) -> U { ... }` | `function f(x: T): U { ... }` |
 | `try expr` | `(() => { try { return { ok: true, value: expr }; } catch (_e) { return { ok: false, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()` |
 | `match x { A -> ..., B -> ... }` | `x.tag === "A" ? ... : x.tag === "B" ? ... : absurd(x)` |
+| `match url { "/users/{id}" -> f(id) }` | `url.match(/^\/users\/([^/]+)$/) ? (() => { const _m = url.match(...); const id = _m![1]; return f(id); })() : ...` |
 | `fetchUser(id)?` | `const _r = fetchUser(id); if (!_r.ok) return _r; const val = _r.value;` |
 | `Ok(value)` | `{ ok: true, value }` |
 | `Err(error)` | `{ ok: false, error }` |

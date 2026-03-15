@@ -347,16 +347,6 @@ fn equality_becomes_structural() {
     assert!(result.contains("!__zenEq(a, b)"));
 }
 
-// ── If/Else -> ternary ────────────────────────────────────────
-
-#[test]
-fn if_else() {
-    assert_eq!(
-        emit("if x { 1 } else { 2 }"),
-        "x ? {\n  1;\n} : {\n  2;\n};"
-    );
-}
-
 // ── Await ────────────────────────────────────────────────────
 
 #[test]
@@ -671,4 +661,28 @@ fn tuple_return_type() {
 #[test]
 fn tuple_trailing_comma() {
     assert_eq!(emit("(1, 2,)"), "[1, 2] as const;");
+}
+
+// ── Pipe: tap ───────────────────────────────────────────────
+
+#[test]
+fn stdlib_pipe_tap_qualified() {
+    let result = emit("[1, 2, 3] |> Pipe.tap(Console.log)");
+    // Console.log gets its own codegen template, so it's expanded inside tap's IIFE
+    assert!(result.contains("const _v"), "output: {result}");
+    assert!(result.contains("return _v"), "output: {result}");
+}
+
+#[test]
+fn stdlib_tap_direct_call() {
+    let result = emit("Pipe.tap([1, 2, 3], Console.log)");
+    assert!(result.contains("const _v"), "output: {result}");
+    assert!(result.contains("return _v"), "output: {result}");
+}
+
+#[test]
+fn stdlib_pipe_tap_with_lambda() {
+    let result = emit("[1, 2, 3] |> Pipe.tap(|x| Console.log(x))");
+    assert!(result.contains("const _v"), "output: {result}");
+    assert!(result.contains("return _v"), "output: {result}");
 }
