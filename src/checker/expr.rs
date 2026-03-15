@@ -545,6 +545,7 @@ impl Checker {
                     for exports in self.dts_imports.values() {
                         if let Some(export) = exports.iter().find(|e| e.name == member_key) {
                             let ty = crate::interop::wrap_boundary_type(&export.ts_type);
+                            self.name_types.insert(member_key, ty.display_name());
                             return ty;
                         }
                     }

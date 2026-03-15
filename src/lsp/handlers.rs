@@ -92,6 +92,18 @@ impl LanguageServer for FloeLsp {
             return Ok(None);
         }
 
+        // Compute word start position and whether this is member access (X.word)
+        let word_start = {
+            let mut s = offset;
+            let bytes = doc.content.as_bytes();
+            while s > 0 && (bytes[s - 1].is_ascii_alphanumeric() || bytes[s - 1] == b'_') {
+                s -= 1;
+            }
+            s
+        };
+        let is_member_access =
+            word_start > 0 && doc.content.as_bytes().get(word_start - 1) == Some(&b'.');
+
         // Check symbol index first
         let symbols = doc.index.find_by_name(word);
         if let Some(sym) = symbols.first() {
@@ -103,6 +115,28 @@ impl LanguageServer for FloeLsp {
                 }),
                 range: None,
             }));
+        }
+
+        // Check for member access on npm imports (e.g. z.object, z.string)
+        if is_member_access {
+            let bytes = doc.content.as_bytes();
+            let dot_pos = word_start - 1;
+            let mut obj_start = dot_pos;
+            while obj_start > 0
+                && (bytes[obj_start - 1].is_ascii_alphanumeric() || bytes[obj_start - 1] == b'_')
+            {
+                obj_start -= 1;
+            }
+            let obj_name = &doc.content[obj_start..dot_pos];
+            if let Some(ty) = doc.type_map.get(&format!("__member_{obj_name}_{word}")) {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: format!("```floe\n{obj_name}.{word}: {ty}\n```"),
+                    }),
+                    range: None,
+                }));
+            }
         }
 
         // Check stdlib module names (Array, String, Option, etc.)
@@ -117,8 +151,6 @@ impl LanguageServer for FloeLsp {
         }
 
         // Check bare stdlib function names (for pipe context only, not member access)
-        let is_member_access =
-            offset > 0 && doc.content.as_bytes().get(offset - word.len() - 1) == Some(&b'.');
         if !is_member_access && let Some(hover_text) = stdlib_hover::hover_stdlib_function(word) {
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
