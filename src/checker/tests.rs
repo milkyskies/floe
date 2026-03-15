@@ -205,6 +205,43 @@ fn exported_function_with_return_type_ok() {
     assert!(!has_error(&diags, "E010"));
 }
 
+// ── Return type mismatch ─────────────────────────────────────
+
+#[test]
+fn return_type_mismatch_errors() {
+    let diags = check(
+        r#"
+fn greet() -> string { 42 }
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "return type mismatch"),
+        "should error when body returns number but declared string, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn return_type_match_ok() {
+    let diags = check(
+        r#"
+fn greet() -> string { "hello" }
+"#,
+    );
+    assert!(!has_error_containing(&diags, "return type mismatch"),);
+}
+
+#[test]
+fn non_exported_function_return_type_not_required() {
+    // Non-exported functions can omit -> return type
+    let diags = check(
+        r#"
+fn helper(x: number) { x * 2 }
+"#,
+    );
+    assert!(!has_error(&diags, "E010"));
+}
+
 // ── Rule 12: String concat warning ──────────────────────────
 
 #[test]
