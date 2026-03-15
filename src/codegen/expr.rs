@@ -220,7 +220,12 @@ impl Codegen {
             // Try: `try expr` → IIFE with try/catch wrapping in Result
             // Non-Error throws are coerced to Error for consistent typing
             ExprKind::Try(inner) => {
-                self.push("(() => { try { return { ok: true as const, value: ");
+                let has_await = expr_contains_await(inner);
+                if has_await {
+                    self.push("await (async () => { try { return { ok: true as const, value: ");
+                } else {
+                    self.push("(() => { try { return { ok: true as const, value: ");
+                }
                 self.emit_expr(inner);
                 self.push(" }; } catch (_e) { return { ok: false as const, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()");
             }
@@ -773,5 +778,29 @@ impl Codegen {
         self.indent -= 1;
         self.emit_indent();
         self.push("}");
+    }
+}
+
+/// Check if an expression tree contains an Await node.
+fn expr_contains_await(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Await(_) => true,
+        ExprKind::Call { callee, args, .. } => {
+            expr_contains_await(callee)
+                || args.iter().any(|a| match a {
+                    Arg::Positional(e) | Arg::Named { value: e, .. } => expr_contains_await(e),
+                })
+        }
+        ExprKind::Member { object, .. } => expr_contains_await(object),
+        ExprKind::Pipe { left, right } => expr_contains_await(left) || expr_contains_await(right),
+        ExprKind::Binary { left, right, .. } => {
+            expr_contains_await(left) || expr_contains_await(right)
+        }
+        ExprKind::Unary { operand, .. }
+        | ExprKind::Grouped(operand)
+        | ExprKind::Unwrap(operand)
+        | ExprKind::Try(operand)
+        | ExprKind::Spread(operand) => expr_contains_await(operand),
+        _ => false,
     }
 }
