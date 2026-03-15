@@ -88,7 +88,33 @@ fn symbol_index_function() {
     let syms = index.find_by_name("add");
     assert_eq!(syms.len(), 1);
     assert_eq!(syms[0].kind, SymbolKind::FUNCTION);
-    assert!(syms[0].detail.contains("fn add"));
+    assert_eq!(
+        syms[0].detail, "fn add(a: number, b: number) -> number",
+        "function detail should use -> for return type, not :"
+    );
+}
+
+#[test]
+fn symbol_index_function_no_return_type() {
+    let source = "fn greet(name: string) { Console.log(name) }";
+    let program = Parser::new(source).parse_program().unwrap();
+    let index = SymbolIndex::build(&program);
+    let syms = index.find_by_name("greet");
+    assert_eq!(syms.len(), 1);
+    assert_eq!(
+        syms[0].detail, "fn greet(name: string)",
+        "function without return type should not have -> or :"
+    );
+}
+
+#[test]
+fn symbol_index_exported_function() {
+    let source = "export fn hello() -> string { \"hi\" }";
+    let program = Parser::new(source).parse_program().unwrap();
+    let index = SymbolIndex::build(&program);
+    let syms = index.find_by_name("hello");
+    assert_eq!(syms.len(), 1);
+    assert_eq!(syms[0].detail, "export fn hello() -> string",);
 }
 
 #[test]

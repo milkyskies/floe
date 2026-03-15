@@ -123,7 +123,7 @@ impl SymbolIndex {
                     let ret = decl
                         .return_type
                         .as_ref()
-                        .map(|t| format!(": {}", type_expr_to_string(t)))
+                        .map(|t| format!(" -> {}", type_expr_to_string(t)))
                         .unwrap_or_default();
 
                     // Extract first param type for pipe-aware completions
