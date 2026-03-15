@@ -105,7 +105,7 @@ export fn MyPage() -> JSX.Element {
 
   return <div>
     <Button onClick={|| setOpen(true)}>Open</Button>
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={|open| setOpen(open)}>
       <p>Dialog content</p>
     </Dialog>
   </div>

@@ -19,8 +19,8 @@ You **must** handle the result:
 
 ```floe
 match divide(10, 3) {
-  Ok(value) -> console.log(value),
-  Err(msg) -> console.error(msg),
+  Ok(value) -> Console.log(value),
+  Err(msg) -> Console.error(msg),
 }
 ```
 
