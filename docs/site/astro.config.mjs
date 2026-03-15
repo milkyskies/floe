@@ -1,9 +1,21 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import starlightLlmsTxt from "starlight-llms-txt";
+import floeGrammar from "../../editors/vscode/syntaxes/floe.tmLanguage.json";
+
+const floeLang = {
+  ...floeGrammar,
+  aliases: ["floe", "fl"],
+};
 
 export default defineConfig({
   site: "https://milkyskies.github.io",
   base: "/floe",
+  markdown: {
+    shikiConfig: {
+      langs: [floeLang],
+    },
+  },
   vite: {
     ssr: {
       noExternal: ["zod"],
@@ -19,6 +31,7 @@ export default defineConfig({
       favicon: "/logo.svg",
       description:
         "A strict, functional language that compiles to TypeScript. Use any TypeScript or React library as-is.",
+      plugins: [starlightLlmsTxt()],
       social: [
         {
           icon: "github",
@@ -38,6 +51,7 @@ export default defineConfig({
             { label: "Pipes", slug: "guide/pipes" },
             { label: "Pattern Matching", slug: "guide/pattern-matching" },
             { label: "Error Handling", slug: "guide/error-handling" },
+            { label: "TypeScript Interop", slug: "guide/typescript-interop" },
             { label: "For Blocks", slug: "guide/for-blocks" },
             { label: "Traits", slug: "guide/traits" },
             { label: "JSX", slug: "guide/jsx" },
