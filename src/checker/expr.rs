@@ -761,6 +761,7 @@ impl Checker {
 
             ExprKind::Array(elements) => {
                 let mut elem_type: Option<Type> = None;
+                let mut mixed = false;
                 for el in elements {
                     let ty = self.check_expr(el);
                     if let Some(ref prev) = elem_type {
@@ -768,21 +769,17 @@ impl Checker {
                             && !matches!(ty, Type::Unknown | Type::Var(_))
                             && !matches!(prev, Type::Unknown | Type::Var(_))
                         {
-                            self.diagnostics.push(
-                                Diagnostic::error(
-                                    "array elements have mixed types, add an explicit type annotation",
-                                    el.span,
-                                )
-                                .with_label("mismatched element type")
-                                .with_help("add an explicit type annotation to the array")
-                                .with_code("E004"),
-                            );
+                            mixed = true;
                         }
                     } else {
                         elem_type = Some(ty);
                     }
                 }
-                Type::Array(Box::new(elem_type.unwrap_or(Type::Unknown)))
+                if mixed {
+                    Type::Array(Box::new(Type::Unknown))
+                } else {
+                    Type::Array(Box::new(elem_type.unwrap_or(Type::Unknown)))
+                }
             }
 
             ExprKind::Tuple(elements) => {

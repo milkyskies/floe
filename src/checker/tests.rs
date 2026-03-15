@@ -273,9 +273,18 @@ fn homogeneous_array() {
 }
 
 #[test]
-fn mixed_array_error() {
+fn mixed_array_inferred_as_unknown() {
+    // Mixed-type arrays should be allowed and inferred as Array<unknown>
     let diags = check(r#"const _x = [1, "two", 3]"#);
-    assert!(has_error_containing(&diags, "mixed types"));
+    assert!(!has_error(&diags, "E004"));
+    assert!(!has_error_containing(&diags, "mixed types"));
+}
+
+#[test]
+fn mixed_array_string_and_number() {
+    // e.g. TanStack Query's queryKey: ["user", props.userId]
+    let diags = check(r#"const _x = ["user", 42]"#);
+    assert!(!has_error(&diags, "E004"));
 }
 
 // ── Dead code detection ─────────────────────────────────────
