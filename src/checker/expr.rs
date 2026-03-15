@@ -531,6 +531,17 @@ impl Checker {
                     return Type::Unknown;
                 }
 
+                // Check for npm member access via tsgo probes (e.g. z.object, z.string)
+                if let ExprKind::Identifier(name) = &object.kind {
+                    let member_key = format!("__member_{name}_{field}");
+                    for exports in self.dts_imports.values() {
+                        if let Some(export) = exports.iter().find(|e| e.name == member_key) {
+                            let ty = crate::interop::wrap_boundary_type(&export.ts_type);
+                            return ty;
+                        }
+                    }
+                }
+
                 // Error on member access on `unknown` — must narrow first
                 if matches!(obj_ty, Type::Unknown) {
                     // Allow stdlib module access (e.g. JSON.parse) — those are handled elsewhere

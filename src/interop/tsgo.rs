@@ -356,11 +356,197 @@ fn generate_probe(
         ));
     }
 
-    if probe_index == 0 {
+    // Scan the source for member accesses on imported names (e.g. z.object, z.string)
+    // and generate probes so tsgo resolves their types
+    let mut member_accesses: Vec<(String, String)> = Vec::new(); // (object_name, field)
+    collect_member_accesses_on_imports(program, &imported_names, &mut member_accesses);
+    member_accesses.sort();
+    member_accesses.dedup();
+
+    for (obj, field) in &member_accesses {
+        lines.push(format!(
+            "export const __member_{obj}_{field} = {obj}.{field};",
+        ));
+    }
+
+    if probe_index == 0 && member_accesses.is_empty() {
         return String::new();
     }
 
     lines.join("\n") + "\n"
+}
+
+/// Recursively collect all `X.field` member accesses where X is an imported name.
+fn collect_member_accesses_on_imports(
+    program: &Program,
+    imported_names: &HashMap<String, String>,
+    accesses: &mut Vec<(String, String)>,
+) {
+    for item in &program.items {
+        match &item.kind {
+            ItemKind::Const(decl) => {
+                collect_member_accesses_expr(&decl.value, imported_names, accesses)
+            }
+            ItemKind::Function(func) => {
+                collect_member_accesses_expr(&func.body, imported_names, accesses)
+            }
+            ItemKind::ForBlock(block) => {
+                for func in &block.functions {
+                    collect_member_accesses_expr(&func.body, imported_names, accesses);
+                }
+            }
+            ItemKind::Expr(expr) => collect_member_accesses_expr(expr, imported_names, accesses),
+            _ => {}
+        }
+    }
+}
+
+/// Recursively collect member accesses from an expression.
+fn collect_member_accesses_expr(
+    expr: &Expr,
+    imported_names: &HashMap<String, String>,
+    accesses: &mut Vec<(String, String)>,
+) {
+    match &expr.kind {
+        ExprKind::Member { object, field } => {
+            if let ExprKind::Identifier(name) = &object.kind
+                && imported_names.contains_key(name)
+            {
+                accesses.push((name.clone(), field.clone()));
+            }
+            collect_member_accesses_expr(object, imported_names, accesses);
+        }
+        ExprKind::Call { callee, args, .. } => {
+            collect_member_accesses_expr(callee, imported_names, accesses);
+            for arg in args {
+                match arg {
+                    Arg::Positional(e) | Arg::Named { value: e, .. } => {
+                        collect_member_accesses_expr(e, imported_names, accesses);
+                    }
+                }
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_member_accesses_expr(left, imported_names, accesses);
+            collect_member_accesses_expr(right, imported_names, accesses);
+        }
+        ExprKind::Pipe { left, right } => {
+            collect_member_accesses_expr(left, imported_names, accesses);
+            collect_member_accesses_expr(right, imported_names, accesses);
+        }
+        ExprKind::Block(items) => {
+            for item in items {
+                match &item.kind {
+                    ItemKind::Const(decl) => {
+                        collect_member_accesses_expr(&decl.value, imported_names, accesses)
+                    }
+                    ItemKind::Function(func) => {
+                        collect_member_accesses_expr(&func.body, imported_names, accesses)
+                    }
+                    ItemKind::Expr(e) => collect_member_accesses_expr(e, imported_names, accesses),
+                    _ => {}
+                }
+            }
+        }
+        ExprKind::Arrow { body, .. } => {
+            collect_member_accesses_expr(body, imported_names, accesses);
+        }
+        ExprKind::Match { subject, arms } => {
+            collect_member_accesses_expr(subject, imported_names, accesses);
+            for arm in arms {
+                collect_member_accesses_expr(&arm.body, imported_names, accesses);
+            }
+        }
+        ExprKind::Construct { args, .. } => {
+            for arg in args {
+                match arg {
+                    Arg::Positional(e) | Arg::Named { value: e, .. } => {
+                        collect_member_accesses_expr(e, imported_names, accesses);
+                    }
+                }
+            }
+        }
+        ExprKind::Object(fields) => {
+            for (_, value) in fields {
+                collect_member_accesses_expr(value, imported_names, accesses);
+            }
+        }
+        ExprKind::Array(elems) => {
+            for e in elems {
+                collect_member_accesses_expr(e, imported_names, accesses);
+            }
+        }
+        ExprKind::Grouped(inner)
+        | ExprKind::Unary { operand: inner, .. }
+        | ExprKind::Unwrap(inner)
+        | ExprKind::Await(inner)
+        | ExprKind::Try(inner)
+        | ExprKind::Return(Some(inner))
+        | ExprKind::Ok(inner)
+        | ExprKind::Err(inner)
+        | ExprKind::Some(inner)
+        | ExprKind::Spread(inner) => {
+            collect_member_accesses_expr(inner, imported_names, accesses);
+        }
+        ExprKind::TemplateLiteral(parts) => {
+            for part in parts {
+                if let TemplatePart::Expr(e) = part {
+                    collect_member_accesses_expr(e, imported_names, accesses);
+                }
+            }
+        }
+        ExprKind::Index { object, index } => {
+            collect_member_accesses_expr(object, imported_names, accesses);
+            collect_member_accesses_expr(index, imported_names, accesses);
+        }
+        ExprKind::Jsx(jsx) => {
+            collect_member_accesses_jsx(jsx, imported_names, accesses);
+        }
+        ExprKind::Tuple(elems) => {
+            for e in elems {
+                collect_member_accesses_expr(e, imported_names, accesses);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_member_accesses_jsx(
+    jsx: &JsxElement,
+    imported_names: &HashMap<String, String>,
+    accesses: &mut Vec<(String, String)>,
+) {
+    match &jsx.kind {
+        JsxElementKind::Element {
+            props, children, ..
+        } => {
+            for prop in props {
+                if let Some(value) = &prop.value {
+                    collect_member_accesses_expr(value, imported_names, accesses);
+                }
+            }
+            for child in children {
+                match child {
+                    JsxChild::Expr(e) => collect_member_accesses_expr(e, imported_names, accesses),
+                    JsxChild::Element(el) => {
+                        collect_member_accesses_jsx(el, imported_names, accesses)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        JsxElementKind::Fragment { children } => {
+            for child in children {
+                match child {
+                    JsxChild::Expr(e) => collect_member_accesses_expr(e, imported_names, accesses),
+                    JsxChild::Element(el) => {
+                        collect_member_accesses_jsx(el, imported_names, accesses)
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 /// Convert a Floe TypeDecl to a TypeScript type declaration string.
@@ -769,6 +955,22 @@ fn build_specifier_map(
                 });
         }
         probe_index += 1;
+    }
+
+    // Map member access probe results (__member_X_field exports)
+    for export in probe_exports {
+        if let Some(rest) = export.name.strip_prefix("__member_") {
+            // Find which specifier this belongs to
+            if let Some(underscore_pos) = rest.find('_') {
+                let obj_name = &rest[..underscore_pos];
+                if let Some(specifier) = imported_names.get(obj_name) {
+                    result
+                        .entry(specifier.clone())
+                        .or_default()
+                        .push(export.clone());
+                }
+            }
+        }
     }
 
     result
