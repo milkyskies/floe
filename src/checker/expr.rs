@@ -889,6 +889,54 @@ impl Checker {
     /// When the right side uses a bare function name (not locally defined),
     /// resolve it against stdlib using the left side's type.
     fn check_pipe_right(&mut self, left_ty: &Type, right: &Expr) -> Type {
+        // Handle `x |> Module.func` or `x |> Module.func(args)` — stdlib member access
+        let member_info = match &right.kind {
+            ExprKind::Member { object, field } => {
+                if let ExprKind::Identifier(module) = &object.kind {
+                    Some((module.as_str(), field.as_str()))
+                } else {
+                    None
+                }
+            }
+            ExprKind::Call { callee, .. } => {
+                if let ExprKind::Member { object, field } = &callee.kind {
+                    if let ExprKind::Identifier(module) = &object.kind {
+                        Some((module.as_str(), field.as_str()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some((module, func_name)) = member_info
+            && let Some(stdlib_fn) = self.stdlib.lookup(module, func_name)
+        {
+            self.used_names.insert(module.to_string());
+            let ret = stdlib_fn.return_type.clone();
+            if let Some(first_param) = stdlib_fn.params.first()
+                && !self.types_compatible(first_param, left_ty)
+            {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        format!(
+                            "argument 1 to `{module}.{func_name}`: expected `{}`, found `{}`",
+                            first_param.display_name(),
+                            left_ty.display_name()
+                        ),
+                        right.span,
+                    )
+                    .with_label(format!("expected `{}`", first_param.display_name()))
+                    .with_code("E001"),
+                );
+            }
+            self.check_pipe_right_args(right);
+            return ret;
+        }
+
         // Extract the bare function name from the right side
         let bare_name = match &right.kind {
             ExprKind::Identifier(name) => Some(name.as_str()),

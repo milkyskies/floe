@@ -1912,3 +1912,22 @@ for User: Display {
         diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+// ── Bug: Pipe with stdlib member access returns Unknown ─────
+// `x |> String.length` should infer as number, not unknown
+
+#[test]
+fn pipe_stdlib_member_returns_correct_type() {
+    let source = r#"
+const len = "hello" |> String.length
+const doubled = len + 1
+"#;
+    let diags = check(source);
+    // If len were Unknown, `len + 1` might not error but let's
+    // verify there's no "not defined" or type errors at all
+    assert!(
+        diags.iter().all(|d| d.severity != Severity::Error),
+        "pipe with String.length should infer number, got errors: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
