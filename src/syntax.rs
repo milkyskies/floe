@@ -33,6 +33,7 @@ pub enum SyntaxKind {
     KW_SELF,
     KW_TRY,
     KW_TRAIT,
+    KW_WHEN,
 
     // Built-in constructors
     KW_OK,
@@ -126,6 +127,7 @@ pub enum SyntaxKind {
     ARROW_EXPR,
     MATCH_EXPR,
     MATCH_ARM,
+    MATCH_GUARD,
     PATTERN,
     BLOCK_EXPR,
     RETURN_EXPR,
@@ -135,6 +137,7 @@ pub enum SyntaxKind {
     GROUPED_EXPR,
     ARRAY_EXPR,
     SPREAD_EXPR,
+    TUPLE_EXPR,
     DOT_SHORTHAND,
     OK_EXPR,
     ERR_EXPR,
@@ -217,6 +220,7 @@ pub fn token_kind_to_syntax(kind: &TokenKind) -> SyntaxKind {
         TokenKind::SelfKw => SyntaxKind::KW_SELF,
         TokenKind::Try => SyntaxKind::KW_TRY,
         TokenKind::Trait => SyntaxKind::KW_TRAIT,
+        TokenKind::When => SyntaxKind::KW_WHEN,
         TokenKind::Ok => SyntaxKind::KW_OK,
         TokenKind::Err => SyntaxKind::KW_ERR,
         TokenKind::Some => SyntaxKind::KW_SOME,

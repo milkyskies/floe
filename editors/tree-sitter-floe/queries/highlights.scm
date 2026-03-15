@@ -14,6 +14,7 @@
 "for" @keyword
 "trait" @keyword
 "opaque" @keyword
+"when" @keyword
 
 ; ── Self ────────────────────────────────────────────────
 (self) @variable.builtin
