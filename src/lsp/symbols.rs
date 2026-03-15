@@ -342,7 +342,7 @@ impl SymbolIndex {
                         end: 0,
                         import_source: Some(source.clone()),
                         detail: format!(
-                            "fn {}({}){} (for-block from \"{}\")",
+                            "fn {}({}){} (from \"{}\")",
                             func.name,
                             params.join(", "),
                             ret,
