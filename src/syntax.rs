@@ -32,6 +32,7 @@ pub enum SyntaxKind {
     KW_FOR,
     KW_SELF,
     KW_TRY,
+    KW_ASSERT,
     KW_WHEN,
 
     // Built-in constructors
@@ -102,6 +103,8 @@ pub enum SyntaxKind {
     TYPE_DEF_UNION,
     TYPE_DEF_ALIAS,
     FOR_BLOCK,
+    TEST_BLOCK,
+    ASSERT_EXPR,
     RECORD_FIELD,
     VARIANT,
     VARIANT_FIELD,
@@ -217,6 +220,7 @@ pub fn token_kind_to_syntax(kind: &TokenKind) -> SyntaxKind {
         TokenKind::For => SyntaxKind::KW_FOR,
         TokenKind::SelfKw => SyntaxKind::KW_SELF,
         TokenKind::Try => SyntaxKind::KW_TRY,
+        TokenKind::Assert => SyntaxKind::KW_ASSERT,
         TokenKind::When => SyntaxKind::KW_WHEN,
         TokenKind::Ok => SyntaxKind::KW_OK,
         TokenKind::Err => SyntaxKind::KW_ERR,

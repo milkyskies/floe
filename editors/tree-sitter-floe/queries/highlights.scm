@@ -13,6 +13,8 @@
 "trusted" @keyword
 "for" @keyword
 "opaque" @keyword
+"test" @keyword
+"assert" @keyword
 "when" @keyword
 
 ; ── Self ────────────────────────────────────────────────
