@@ -246,11 +246,14 @@ impl Checker {
                 for segment in segments {
                     if let StringPatternSegment::Capture(name) = segment {
                         self.env.define(name, Type::String);
+                        self.name_types.insert(name.clone(), "string".to_string());
                     }
                 }
             }
             PatternKind::Binding(name) => {
                 self.env.define(name, subject_ty.clone());
+                self.name_types
+                    .insert(name.clone(), subject_ty.display_name());
             }
             PatternKind::Tuple(patterns) => {
                 if let Type::Tuple(types) = subject_ty {

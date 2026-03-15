@@ -116,8 +116,10 @@ impl LanguageServer for FloeLsp {
             }));
         }
 
-        // Check bare stdlib function names (for pipe context)
-        if let Some(hover_text) = stdlib_hover::hover_stdlib_function(word) {
+        // Check bare stdlib function names (for pipe context only, not member access)
+        let is_member_access =
+            offset > 0 && doc.content.as_bytes().get(offset - word.len() - 1) == Some(&b'.');
+        if !is_member_access && let Some(hover_text) = stdlib_hover::hover_stdlib_function(word) {
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
