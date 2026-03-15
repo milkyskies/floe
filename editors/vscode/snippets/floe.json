@@ -130,5 +130,12 @@
       "}"
     ],
     "description": "Trait implementation"
+  },
+  "Tap Debug": {
+    "prefix": "tap",
+    "body": [
+      "tap(${1:Console.log})"
+    ],
+    "description": "Tap for pipeline debugging"
   }
 }

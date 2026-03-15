@@ -129,3 +129,9 @@ fn snapshot_traits() {
     let output = compile_fixture("traits");
     insta::assert_snapshot!(output);
 }
+
+#[test]
+fn snapshot_string_patterns() {
+    let output = compile_fixture("string_patterns");
+    insta::assert_snapshot!(output);
+}

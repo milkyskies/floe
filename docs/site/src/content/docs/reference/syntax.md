@@ -123,16 +123,7 @@ match expr {
 }
 ```
 
-### If/Else
-
-```floe
-if condition {
-  then_expr
-} else {
-  else_expr
-}
-```
-
+Patterns: literals (`42`, `"hello"`, `true`), ranges (`1..10`), variants (`Ok(x)`), records (`{ x, y }`), string patterns (`"/users/{id}"`), bindings (`x`), wildcard (`_`).
 ### Function Call
 
 ```floe
