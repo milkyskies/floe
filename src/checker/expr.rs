@@ -70,8 +70,6 @@ impl Checker {
 
             ExprKind::Pipe { left, right } => {
                 let left_ty = self.check_expr(left);
-                // Type-directed resolution: for bare function names in pipes,
-                // check stdlib before reporting "not defined"
                 self.check_pipe_right(&left_ty, right)
             }
 
@@ -1064,10 +1062,11 @@ impl Checker {
             _ => None,
         };
 
-        // If it's a bare name not in scope, try stdlib resolution
+        // If it's a bare name not locally defined (or is a known stdlib function),
+        // try stdlib resolution
         if let Some(name) = bare_name
-            && self.env.lookup(name).is_none()
             && !self.stdlib.is_module(name)
+            && (self.env.lookup(name).is_none() || !self.stdlib.lookup_by_name(name).is_empty())
         {
             let module = Self::type_to_stdlib_module(left_ty);
             let fallback_matches = self.stdlib.lookup_by_name(name);
