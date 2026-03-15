@@ -5,7 +5,7 @@
 //! type arguments, run tsgo (TypeScript's Go-based compiler) to emit a
 //! `.d.ts`, and parse the fully-resolved types from the output.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -268,12 +268,34 @@ fn generate_probe(
 
     // Re-export ALL imported names so we get their types
     // (even if they were also used in calls above)
-    for name in imported_names.keys() {
+    // Sort keys for deterministic probe/map ordering
+    let mut sorted_import_names: Vec<_> = imported_names.keys().cloned().collect();
+    sorted_import_names.sort();
+    for name in &sorted_import_names {
         probe_reexports.push(ProbeReexport {
             index: probe_index,
             name: name.clone(),
         });
         probe_index += 1;
+    }
+
+    // Collect free variables referenced in probe call args and declare them
+    // so tsgo doesn't error on undefined identifiers
+    let mut declared_names: HashSet<String> = imported_names.keys().cloned().collect();
+    // Also include type names
+    for item in &program.items {
+        if let ItemKind::TypeDecl(decl) = &item.kind {
+            declared_names.insert(decl.name.clone());
+        }
+    }
+    let mut free_vars: HashSet<String> = HashSet::new();
+    for call in &probe_calls {
+        for arg_str in &call.args {
+            collect_free_vars_from_ts(arg_str, &declared_names, &mut free_vars);
+        }
+    }
+    for var in &free_vars {
+        lines.push(format!("declare const {var}: any;"));
     }
 
     // Emit probe const declarations
@@ -538,7 +560,8 @@ fn create_probe_dir(project_dir: &Path, probe_content: &str) -> Result<tempfile:
     let tsconfig = r#"{
   "compilerOptions": {
     "moduleResolution": "bundler",
-    "strict": true,
+    "strict": false,
+    "noImplicitAny": false,
     "jsx": "react-jsx",
     "declaration": true,
     "emitDeclarationOnly": true,
@@ -731,8 +754,10 @@ fn build_specifier_map(
         }
     }
 
-    // Map re-export probe results — ALL imported names
-    for (name, specifier) in &imported_names {
+    // Map re-export probe results — ALL imported names (sorted for deterministic order)
+    let mut sorted_import_names: Vec<_> = imported_names.iter().collect();
+    sorted_import_names.sort_by_key(|(name, _)| (*name).clone());
+    for (name, specifier) in sorted_import_names {
         let probe_name = format!("_r{probe_index}");
         if let Some(export) = probe_exports.iter().find(|e| e.name == probe_name) {
             result
@@ -756,6 +781,50 @@ fn const_binding_name(binding: &ConstBinding) -> String {
         ConstBinding::Array(names) => names.join("_"),
         ConstBinding::Object(names) => names.join("_"),
         ConstBinding::Tuple(names) => names.join("_"),
+    }
+}
+
+/// Extract identifier-like tokens from a TypeScript expression string
+/// and collect any that aren't in `declared`. This is a rough heuristic
+/// to find free variables that need `declare const` in the probe.
+fn collect_free_vars_from_ts(ts: &str, declared: &HashSet<String>, free: &mut HashSet<String>) {
+    for token in ts.split(|c: char| !c.is_alphanumeric() && c != '_') {
+        if token.is_empty() || token.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        // Skip TS keywords and common literals
+        if matches!(
+            token,
+            "const"
+                | "let"
+                | "var"
+                | "function"
+                | "return"
+                | "new"
+                | "true"
+                | "false"
+                | "null"
+                | "undefined"
+                | "as"
+                | "any"
+                | "void"
+                | "number"
+                | "string"
+                | "boolean"
+                | "object"
+                | "export"
+                | "import"
+                | "from"
+                | "type"
+                | "async"
+                | "await"
+                | "readonly"
+        ) {
+            continue;
+        }
+        if !declared.contains(token) {
+            free.insert(token.to_string());
+        }
     }
 }
 

@@ -223,7 +223,22 @@ fn cmd_check(path: &Path) -> Result<()> {
         match ZsParser::new(&source).parse_program() {
             Ok(program) => {
                 let resolved = resolve::resolve_imports(file, &program);
-                let check_diags = Checker::with_imports(resolved).check(&program);
+
+                // Resolve npm import types via tsgo
+                let source_dir = file
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .canonicalize()
+                    .unwrap_or_else(|_| file.parent().unwrap_or(Path::new(".")).to_path_buf());
+                let project_dir = find_project_dir(&source_dir);
+                let mut tsgo_resolver = floe::interop::TsgoResolver::new(&project_dir);
+                let dts_map = tsgo_resolver.resolve_imports(&program, &resolved);
+
+                let check_diags = if dts_map.is_empty() {
+                    Checker::with_imports(resolved).check(&program)
+                } else {
+                    Checker::with_all_imports(resolved, dts_map).check(&program)
+                };
                 let type_errors: Vec<_> = check_diags
                     .iter()
                     .filter(|d| d.severity == diagnostic::Severity::Error)
@@ -572,4 +587,21 @@ fn collect_fl_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Find the project root by walking up from `start` looking for node_modules or package.json.
+fn find_project_dir(start: &Path) -> PathBuf {
+    let mut dir = start.to_path_buf();
+    let mut package_json_dir: Option<PathBuf> = None;
+    loop {
+        if dir.join("node_modules").is_dir() {
+            return dir;
+        }
+        if package_json_dir.is_none() && dir.join("package.json").is_file() {
+            package_json_dir = Some(dir.clone());
+        }
+        if !dir.pop() {
+            return package_json_dir.unwrap_or_else(|| start.to_path_buf());
+        }
+    }
 }

@@ -542,9 +542,7 @@ impl Checker {
                     }
                     self.diagnostics.push(
                         Diagnostic::error(
-                            format!(
-                                "cannot access `.{field}` on `unknown` — narrow the type first"
-                            ),
+                            format!("cannot access `.{field}` on `unknown`"),
                             expr.span,
                         )
                         .with_label("`unknown` must be narrowed before member access")
