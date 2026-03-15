@@ -636,3 +636,27 @@ fn union_variant_dot_access_non_union_passthrough() {
     let result = emit("const _x = foo.bar");
     assert!(result.contains("foo.bar"));
 }
+
+// ── Pipe: tap ───────────────────────────────────────────────
+
+#[test]
+fn stdlib_pipe_tap_qualified() {
+    let result = emit("[1, 2, 3] |> Pipe.tap(Console.log)");
+    // Console.log gets its own codegen template, so it's expanded inside tap's IIFE
+    assert!(result.contains("const _v"), "output: {result}");
+    assert!(result.contains("return _v"), "output: {result}");
+}
+
+#[test]
+fn stdlib_tap_direct_call() {
+    let result = emit("Pipe.tap([1, 2, 3], Console.log)");
+    assert!(result.contains("const _v"), "output: {result}");
+    assert!(result.contains("return _v"), "output: {result}");
+}
+
+#[test]
+fn stdlib_pipe_tap_with_lambda() {
+    let result = emit("[1, 2, 3] |> Pipe.tap(|x| Console.log(x))");
+    assert!(result.contains("const _v"), "output: {result}");
+    assert!(result.contains("return _v"), "output: {result}");
+}

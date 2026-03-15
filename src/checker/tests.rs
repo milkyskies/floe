@@ -1256,3 +1256,35 @@ const _y = age
         assert_eq!(age_ty, "number", "age should be number, got: {age_ty}");
     }
 }
+
+// ── Pipe: tap ───────────────────────────────────────────────
+
+#[test]
+fn pipe_tap_no_errors() {
+    // tap with a function should type-check without errors
+    let diags = check(
+        r#"
+const _x = [1, 2, 3] |> tap(Console.log)
+"#,
+    );
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+}
+
+#[test]
+fn pipe_tap_qualified_no_errors() {
+    // Pipe.tap should also work when fully qualified
+    let diags = check(
+        r#"
+const _x = [1, 2, 3] |> Pipe.tap(Console.log)
+"#,
+    );
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+}
