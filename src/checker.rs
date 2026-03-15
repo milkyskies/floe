@@ -49,6 +49,9 @@ pub struct Checker {
     resolved_imports: HashMap<String, ResolvedImports>,
     /// Pre-resolved .d.ts exports for npm imports, keyed by specifier (e.g. "react").
     dts_imports: HashMap<String, Vec<DtsExport>>,
+    /// Counter for disambiguating probe lookups when the same binding name appears
+    /// multiple times (e.g. two `const { data } = ...` destructures).
+    probe_counters: HashMap<String, usize>,
     /// When inside a pipe, holds the type of the piped (left) value.
     /// The Call handler uses this to account for the implicit first argument.
     pipe_input_type: Option<Type>,
@@ -200,6 +203,7 @@ impl Checker {
             registering_types: false,
             resolved_imports: HashMap::new(),
             dts_imports: HashMap::new(),
+            probe_counters: HashMap::new(),
             pipe_input_type: None,
             name_types: HashMap::new(),
             defined_sources: HashMap::new(),
@@ -715,12 +719,28 @@ impl Checker {
                 ConstBinding::Object(names) => names.join("_"),
                 ConstBinding::Tuple(names) => names.join("_"),
             };
+            // Try exact match first (__probe_name), then any indexed match (__probe_name_N)
+            // using consumed set to avoid reusing the same probe
             let probe_key = format!("__probe_{binding_name}");
-            self.dts_imports
-                .values()
-                .flatten()
-                .find(|e| e.name == probe_key)
-                .map(|e| interop::wrap_boundary_type(&e.ts_type))
+            let probe_prefix = format!("__probe_{binding_name}_");
+            let mut found_export = None;
+            for exports in self.dts_imports.values() {
+                for export in exports {
+                    if (export.name == probe_key || export.name.starts_with(&probe_prefix))
+                        && !self.probe_counters.contains_key(&export.name)
+                    {
+                        found_export = Some(export.clone());
+                        break;
+                    }
+                }
+                if found_export.is_some() {
+                    break;
+                }
+            }
+            if let Some(ref export) = found_export {
+                self.probe_counters.insert(export.name.clone(), 0); // mark as consumed
+            }
+            found_export.map(|e| interop::wrap_boundary_type(&e.ts_type))
         };
 
         let final_type = if let Some(ref tsgo_ty) = tsgo_type {

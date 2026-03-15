@@ -987,13 +987,14 @@ fn build_specifier_map(
                         })
                         .collect();
                     // Create individual probes for each destructured field
+                    // Use probe_index to disambiguate when same field name appears multiple times
                     for (i, name) in names.iter().enumerate() {
                         if i < elem_types.len() {
                             result
                                 .entry(specifier.clone())
                                 .or_default()
                                 .push(DtsExport {
-                                    name: format!("__probe_{name}"),
+                                    name: format!("__probe_{name}_{probe_index}"),
                                     ts_type: elem_types[i].clone(),
                                 });
                         }
