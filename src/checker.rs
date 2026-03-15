@@ -456,6 +456,7 @@ impl Checker {
             "()" => Type::Unit,
             "undefined" => Type::Undefined,
             "unknown" => Type::Unknown,
+            "Error" => Type::Named("Error".to_string()),
             "Result" => {
                 let ok = type_args
                     .first()

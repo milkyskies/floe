@@ -219,15 +219,127 @@ impl Parser {
             }
             TokenKind::Try => {
                 self.advance();
-                let operand = self.parse_unary_expr()?;
+                // Parse inner without consuming `?` — so `try fetch()?` parses as
+                // `(try fetch())?`, not `try (fetch()?)`.
+                let operand = self.parse_unary_no_unwrap()?;
                 let end_span = self.previous_span();
-                Ok(Expr {
+                let mut expr = Expr {
                     kind: ExprKind::Try(Box::new(operand)),
                     span: self.merge_spans(start_span, end_span),
-                })
+                };
+                // Now consume trailing `?` which applies to the try-wrapped Result
+                if self.check(&TokenKind::Question) {
+                    self.advance();
+                    let span = self.merge_spans(expr.span, self.previous_span());
+                    expr = Expr {
+                        kind: ExprKind::Unwrap(Box::new(expr)),
+                        span,
+                    };
+                }
+                Ok(expr)
             }
             _ => self.parse_postfix_expr(),
         }
+    }
+
+    /// Like `parse_unary_expr` but does not consume `?` in postfix position.
+    /// Used by `try` so that `try fetch()?` parses as `(try fetch())?`.
+    fn parse_unary_no_unwrap(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.current_span();
+        match self.current_kind() {
+            TokenKind::Bang => {
+                self.advance();
+                let operand = self.parse_unary_no_unwrap()?;
+                let end_span = self.previous_span();
+                Ok(Expr {
+                    kind: ExprKind::Unary {
+                        op: UnaryOp::Not,
+                        operand: Box::new(operand),
+                    },
+                    span: self.merge_spans(start_span, end_span),
+                })
+            }
+            TokenKind::Minus => {
+                self.advance();
+                let operand = self.parse_unary_no_unwrap()?;
+                let end_span = self.previous_span();
+                Ok(Expr {
+                    kind: ExprKind::Unary {
+                        op: UnaryOp::Neg,
+                        operand: Box::new(operand),
+                    },
+                    span: self.merge_spans(start_span, end_span),
+                })
+            }
+            TokenKind::Await => {
+                self.advance();
+                let operand = self.parse_unary_no_unwrap()?;
+                let end_span = self.previous_span();
+                Ok(Expr {
+                    kind: ExprKind::Await(Box::new(operand)),
+                    span: self.merge_spans(start_span, end_span),
+                })
+            }
+            _ => self.parse_postfix_no_unwrap(),
+        }
+    }
+
+    /// Like `parse_postfix_expr` but does not consume `?`.
+    fn parse_postfix_no_unwrap(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_primary_expr()?;
+
+        loop {
+            match self.current_kind() {
+                // Skip `?` — caller (try) will handle it
+                TokenKind::Question => break,
+                TokenKind::Dot => {
+                    self.advance();
+                    let field = self.expect_identifier()?;
+                    let span = self.merge_spans(expr.span, self.previous_span());
+                    expr = Expr {
+                        kind: ExprKind::Member {
+                            object: Box::new(expr),
+                            field,
+                        },
+                        span,
+                    };
+                }
+                TokenKind::LeftBracket => {
+                    self.advance();
+                    let index = self.parse_expr()?;
+                    self.expect(&TokenKind::RightBracket)?;
+                    let span = self.merge_spans(expr.span, self.previous_span());
+                    expr = Expr {
+                        kind: ExprKind::Index {
+                            object: Box::new(expr),
+                            index: Box::new(index),
+                        },
+                        span,
+                    };
+                }
+                TokenKind::LeftParen => {
+                    if matches!(&expr.kind, ExprKind::Identifier(name) if name.starts_with(char::is_uppercase))
+                    {
+                        break;
+                    }
+                    self.advance();
+                    let args = self.parse_call_args()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    let span = self.merge_spans(expr.span, self.previous_span());
+                    expr = Expr {
+                        kind: ExprKind::Call {
+                            callee: Box::new(expr),
+                            type_args: Vec::new(),
+                            args,
+                        },
+                        span,
+                    };
+                }
+                _ => break,
+            }
+        }
+
+        Ok(expr)
     }
 
     /// Postfix: `expr?`, `expr.field`, `expr[index]`, `expr(args)`

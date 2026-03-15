@@ -1,6 +1,25 @@
 import trusted { useState, Suspense } from "react"
 import trusted { useSuspenseQuery, QueryClient, QueryClientProvider, QueryErrorResetBoundary } from "@tanstack/react-query"
 import trusted { ErrorBoundary } from "react-error-boundary"
+import trusted { z } from "zod"
+
+const PostSchema = z.object({
+    id: z.number(),
+    title: z.string(),
+    body: z.string(),
+    userId: z.number(),
+})
+
+const PostArraySchema = z.array(PostSchema)
+
+const UserSchema = z.object({
+    id: z.number(),
+    name: z.string(),
+    email: z.string(),
+    company: z.object({
+        name: z.string(),
+    }),
+})
 
 type Post = {
     id: number,
@@ -25,21 +44,31 @@ const queryClient = QueryClient({
     },
 })
 
-fn PostAuthor(props: { userId: number }) -> JSX.Element {
-    async fn fetchUser() {
-        const res = await fetch(`https://jsonplaceholder.typicode.com/users/${props.userId}`)
-        return await res.json()
-    }
+async fn fetchUser(userId: number) -> Result<User, Error> {
+    const res = try await fetch(`https://jsonplaceholder.typicode.com/users/${userId}`)?
+    const json = try await res.json()?
+    const user = try UserSchema.parse(json)?
+    return Ok(user)
+}
 
+async fn fetchPosts(url: string) -> Result<Array<Post>, Error> {
+    const res = try await fetch(url)?
+    const json = try await res.json()?
+    const posts = try PostArraySchema.parse(json)?
+    return Ok(posts)
+}
+
+fn PostAuthor(props: { userId: number }) -> JSX.Element {
     const { data } = useSuspenseQuery({
         queryKey: ["user", props.userId],
-        queryFn: fetchUser,
+        queryFn: async || fetchUser(props.userId),
     })
 
-    const user: User = data
-
     return <span className="text-indigo-400">
-        {`${user.name} (${user.company.name})`}
+        {match data {
+            Ok(user) -> `${user.name} (${user.company.name})`,
+            Err(e) -> `Error: ${e.message}`,
+        }}
     </span>
 }
 
@@ -47,19 +76,19 @@ fn PostList() -> JSX.Element {
     const [selectedUserId, setSelectedUserId] = useState<Option<number>>(None)
 
     const url = match selectedUserId {
-        Some(id) -> `https://jsonplaceholder.typicode.com/posts?userId=${id}`,
+        Some(uid) -> `https://jsonplaceholder.typicode.com/posts?userId=${uid}`,
         None -> "https://jsonplaceholder.typicode.com/posts?_limit=10",
     }
 
     const { data } = useSuspenseQuery({
         queryKey: ["posts", selectedUserId],
-        queryFn: async || {
-            const res = await fetch(url)
-            return await res.json()
-        },
+        queryFn: async || fetchPosts(url),
     })
 
-    const posts: Array<Post> = data
+    const posts = match data {
+        Ok(p) -> p,
+        Err(_) -> [],
+    }
 
     const userIds = [1, 2, 3, 4, 5]
 
