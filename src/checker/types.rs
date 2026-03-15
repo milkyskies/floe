@@ -172,4 +172,54 @@ impl TypeEnv {
     pub(crate) fn lookup_type(&self, name: &str) -> Option<&TypeInfo> {
         self.type_defs.get(name)
     }
+
+    /// Resolve a `Type::Named("Foo")` to its concrete type by looking up the type definition.
+    /// For records, returns `Type::Record(fields)`. For unions, returns `Type::Union`.
+    /// For aliases, follows the chain. Primitives and non-Named types pass through unchanged.
+    pub(crate) fn resolve_to_concrete(
+        &self,
+        ty: &Type,
+        resolve_type_fn: &dyn Fn(&crate::parser::ast::TypeExpr) -> Type,
+    ) -> Type {
+        match ty {
+            Type::Named(name) => {
+                if let Some(info) = self.lookup_type(name) {
+                    match &info.def {
+                        crate::parser::ast::TypeDef::Record(fields) => {
+                            let field_types: Vec<_> = fields
+                                .iter()
+                                .map(|f| (f.name.clone(), resolve_type_fn(&f.type_ann)))
+                                .collect();
+                            Type::Record(field_types)
+                        }
+                        crate::parser::ast::TypeDef::Union(variants) => {
+                            let var_types: Vec<_> = variants
+                                .iter()
+                                .map(|v| {
+                                    let field_types: Vec<_> = v
+                                        .fields
+                                        .iter()
+                                        .map(|f| resolve_type_fn(&f.type_ann))
+                                        .collect();
+                                    (v.name.clone(), field_types)
+                                })
+                                .collect();
+                            Type::Union {
+                                name: name.clone(),
+                                variants: var_types,
+                            }
+                        }
+                        crate::parser::ast::TypeDef::Alias(type_expr) => {
+                            let resolved = resolve_type_fn(type_expr);
+                            // Follow alias chains
+                            self.resolve_to_concrete(&resolved, resolve_type_fn)
+                        }
+                    }
+                } else {
+                    ty.clone()
+                }
+            }
+            _ => ty.clone(),
+        }
+    }
 }

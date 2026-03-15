@@ -641,9 +641,58 @@ impl Checker {
                 }
             }
             ConstBinding::Object(names) => {
+                // Resolve the value type to find field types for destructuring
+                let concrete = {
+                    let resolve_fn = |type_expr: &crate::parser::ast::TypeExpr| -> Type {
+                        match &type_expr.kind {
+                            crate::parser::ast::TypeExprKind::Named { name, .. } => {
+                                match name.as_str() {
+                                    "number" => Type::Number,
+                                    "string" => Type::String,
+                                    "boolean" => Type::Bool,
+                                    "()" => Type::Unit,
+                                    "undefined" => Type::Undefined,
+                                    _ => Type::Named(name.to_string()),
+                                }
+                            }
+                            crate::parser::ast::TypeExprKind::Array(inner) => {
+                                let inner_resolved = match &inner.kind {
+                                    crate::parser::ast::TypeExprKind::Named { name, .. } => {
+                                        match name.as_str() {
+                                            "number" => Type::Number,
+                                            "string" => Type::String,
+                                            "boolean" => Type::Bool,
+                                            _ => Type::Named(name.to_string()),
+                                        }
+                                    }
+                                    _ => Type::Unknown,
+                                };
+                                Type::Array(Box::new(inner_resolved))
+                            }
+                            _ => Type::Unknown,
+                        }
+                    };
+                    self.env.resolve_to_concrete(&final_type, &resolve_fn)
+                };
+
+                let field_map: Option<std::collections::HashMap<&str, &Type>> = match &concrete {
+                    Type::Record(fields) => {
+                        Some(fields.iter().map(|(n, t)| (n.as_str(), t)).collect())
+                    }
+                    _ => None,
+                };
+
                 for name in names {
+                    let field_ty = field_map
+                        .as_ref()
+                        .and_then(|m| m.get(name.as_str()))
+                        .cloned()
+                        .cloned()
+                        .unwrap_or(Type::Unknown);
                     self.check_no_redefinition(name, span);
-                    self.env.define(name, Type::Unknown);
+                    self.name_types
+                        .insert(name.clone(), field_ty.display_name());
+                    self.env.define(name, field_ty);
                     self.defined_sources
                         .insert(name.clone(), "const".to_string());
                     self.defined_names.push((name.clone(), span));

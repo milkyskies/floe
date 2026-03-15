@@ -420,14 +420,67 @@ impl Checker {
                         }
                     }
                 }
+
+                // Build a map of field name -> expected type from the type definition
+                let field_type_map: Option<Vec<(String, Type)>> = if let Some(ref info) = type_info
+                {
+                    match &info.def {
+                        TypeDef::Record(fields) => Some(
+                            fields
+                                .iter()
+                                .map(|f| (f.name.clone(), self.resolve_type(&f.type_ann)))
+                                .collect(),
+                        ),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                // Check each argument and validate types against declared fields
                 for arg in args {
                     match arg {
-                        Arg::Positional(e) | Arg::Named { value: e, .. } => {
+                        Arg::Named {
+                            label, value: e, ..
+                        } => {
+                            let arg_ty = self.check_expr(e);
+                            // Validate type against declared field type
+                            if let Some(ref field_types) = field_type_map
+                                && let Some((_, expected_ty)) =
+                                    field_types.iter().find(|(n, _)| n == label)
+                                && !self.types_compatible(expected_ty, &arg_ty)
+                                && !matches!(arg_ty, Type::Unknown | Type::Var(_))
+                            {
+                                self.diagnostics.push(
+                                    Diagnostic::error(
+                                        format!(
+                                            "field `{label}`: expected `{}`, found `{}`",
+                                            expected_ty.display_name(),
+                                            arg_ty.display_name()
+                                        ),
+                                        expr.span,
+                                    )
+                                    .with_label(format!(
+                                        "expected `{}`",
+                                        expected_ty.display_name()
+                                    ))
+                                    .with_code("E001"),
+                                );
+                            }
+                        }
+                        Arg::Positional(e) => {
                             self.check_expr(e);
                         }
                     }
                 }
 
+                // If this is a variant constructor, return the parent union type
+                // rather than Named(variant_name) so match arm types are consistent
+                if let Some(ty) = self.env.lookup(type_name).cloned()
+                    && let Type::Union { .. } = &ty
+                {
+                    return ty;
+                }
                 Type::Named(type_name.clone())
             }
 
@@ -446,6 +499,7 @@ impl Checker {
                         .with_help("Use `match result { Ok(v) -> ..., Err(e) -> ... }`")
                         .with_code("E006"),
                     );
+                    return Type::Unknown;
                 }
                 if let Type::Union { name, .. } = &obj_ty {
                     self.diagnostics.push(
@@ -459,12 +513,54 @@ impl Checker {
                         .with_help("Use `match` to narrow the union first")
                         .with_code("E006"),
                     );
+                    return Type::Unknown;
                 }
-                if let Type::Record(fields) = &obj_ty
-                    && let Some((_, ty)) = fields.iter().find(|(n, _)| n == field)
-                {
-                    return ty.clone();
+
+                // Resolve Named types to their concrete definition
+                let concrete = self.resolve_type_to_concrete(&obj_ty);
+
+                if let Type::Record(fields) = &concrete {
+                    if let Some((_, ty)) = fields.iter().find(|(n, _)| n == field) {
+                        return ty.clone();
+                    }
+                    // Field not found on a known record type
+                    let type_name = if let Type::Named(name) = &obj_ty {
+                        format!("type `{name}`")
+                    } else {
+                        format!("type `{}`", obj_ty.display_name())
+                    };
+                    self.diagnostics.push(
+                        Diagnostic::error(format!("{type_name} has no field `{field}`"), expr.span)
+                            .with_label("unknown field")
+                            .with_help(format!(
+                                "available fields: {}",
+                                fields
+                                    .iter()
+                                    .map(|(n, _)| n.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ))
+                            .with_code("E017"),
+                    );
+                    return Type::Unknown;
                 }
+
+                // Error on member access on primitive types
+                match &obj_ty {
+                    Type::Number | Type::String | Type::Bool | Type::Unit => {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                format!("cannot access `.{field}` on `{}`", obj_ty.display_name()),
+                                expr.span,
+                            )
+                            .with_label("not a record type")
+                            .with_code("E017"),
+                        );
+                        return Type::Unknown;
+                    }
+                    _ => {}
+                }
+
                 Type::Unknown
             }
 
@@ -511,7 +607,25 @@ impl Checker {
                     let arm_type = self.check_expr(&arm.body);
                     self.env.pop_scope();
 
-                    if result_type.is_none() {
+                    if let Some(ref first_type) = result_type {
+                        if !self.types_compatible(first_type, &arm_type)
+                            && !matches!(arm_type, Type::Unknown | Type::Var(_))
+                            && !matches!(first_type, Type::Unknown | Type::Var(_))
+                        {
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    format!(
+                                        "match arms have incompatible types: expected `{}`, found `{}`",
+                                        first_type.display_name(),
+                                        arm_type.display_name()
+                                    ),
+                                    arm.body.span,
+                                )
+                                .with_label(format!("expected `{}`", first_type.display_name()))
+                                .with_code("E001"),
+                            );
+                        }
+                    } else {
                         result_type = Some(arm_type);
                     }
                 }
@@ -526,7 +640,24 @@ impl Checker {
                 self.check_expr(condition);
                 let then_ty = self.check_expr(then_branch);
                 if let Some(else_expr) = else_branch {
-                    self.check_expr(else_expr);
+                    let else_ty = self.check_expr(else_expr);
+                    if !self.types_compatible(&then_ty, &else_ty)
+                        && !matches!(then_ty, Type::Unknown | Type::Var(_))
+                        && !matches!(else_ty, Type::Unknown | Type::Var(_))
+                    {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                format!(
+                                    "if/else branches have incompatible types: expected `{}`, found `{}`",
+                                    then_ty.display_name(),
+                                    else_ty.display_name()
+                                ),
+                                else_expr.span,
+                            )
+                            .with_label(format!("expected `{}`", then_ty.display_name()))
+                            .with_code("E001"),
+                        );
+                    }
                 }
                 then_ty
             }
@@ -1013,5 +1144,38 @@ impl Checker {
             Type::Result { .. } => Some("Result"),
             _ => None,
         }
+    }
+
+    /// Resolve a type to its concrete definition, following Named type lookups.
+    fn resolve_type_to_concrete(&mut self, ty: &Type) -> Type {
+        // We need to clone the env reference data to avoid borrow issues
+        let resolve_fn = |type_expr: &crate::parser::ast::TypeExpr| -> Type {
+            // Simple resolution without mutating self — just map named types
+            match &type_expr.kind {
+                crate::parser::ast::TypeExprKind::Named { name, .. } => match name.as_str() {
+                    "number" => Type::Number,
+                    "string" => Type::String,
+                    "boolean" => Type::Bool,
+                    "()" => Type::Unit,
+                    "undefined" => Type::Undefined,
+                    _ => Type::Named(name.to_string()),
+                },
+                crate::parser::ast::TypeExprKind::Array(inner) => {
+                    let inner_resolved = match &inner.kind {
+                        crate::parser::ast::TypeExprKind::Named { name, .. } => match name.as_str()
+                        {
+                            "number" => Type::Number,
+                            "string" => Type::String,
+                            "boolean" => Type::Bool,
+                            _ => Type::Named(name.to_string()),
+                        },
+                        _ => Type::Unknown,
+                    };
+                    Type::Array(Box::new(inner_resolved))
+                }
+                _ => Type::Unknown,
+            }
+        };
+        self.env.resolve_to_concrete(ty, &resolve_fn)
     }
 }

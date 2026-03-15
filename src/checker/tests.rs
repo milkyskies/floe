@@ -998,3 +998,221 @@ const _r = 5 |> double
         diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+// ── Phase 1: Type Resolution Foundation ─────────────────────
+
+// ── 2. Member access on Named types ────────────────────────
+
+#[test]
+fn member_access_on_record_type_resolves_field() {
+    let diags = check(
+        r#"
+type User = { name: string, age: number }
+const u = User(name: "hi", age: 21)
+const _n = u.name
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "Unknown"),
+        "u.name should resolve to string, got errors: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    // Verify no errors at all (field access should succeed)
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "member access on record type should not produce errors, got: {:?}",
+        errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn member_access_unknown_field_errors() {
+    let diags = check(
+        r#"
+type User = { name: string }
+const u = User(name: "hi")
+const _n = u.nonexistent
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "has no field `nonexistent`"),
+        "should error on unknown field, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn member_access_on_non_record_errors() {
+    let diags = check(
+        r#"
+const x = 5
+const _n = x.name
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "cannot access"),
+        "should error on member access on number, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── 3. Constructor field type validation ───────────────────
+
+#[test]
+fn constructor_wrong_field_type_errors() {
+    let diags = check(
+        r#"
+type User = { name: string, age: number }
+const _u = User(name: 42, age: "old")
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "expected `string`, found `number`"),
+        "should error on wrong field type, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn constructor_correct_types_ok() {
+    let diags = check(
+        r#"
+type User = { name: string, age: number }
+const _u = User(name: "hi", age: 21)
+"#,
+    );
+    let type_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error && d.message.contains("expected"))
+        .collect();
+    assert!(
+        type_errors.is_empty(),
+        "correct constructor types should not error, got: {:?}",
+        type_errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn constructor_missing_field_errors_phase1() {
+    // This test verifies missing field detection (already exists as constructor_missing_required_field
+    // but let's add one that specifically tests the two-field case)
+    let diags = check(
+        r#"
+type User = { name: string, age: number }
+const _u = User(name: "hi")
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "missing field `age`"),
+        "should error on missing required field, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── 4. Match arm type consistency ──────────────────────────
+
+#[test]
+fn match_arms_incompatible_types_errors() {
+    let diags = check(
+        r#"
+const x = 1
+const _y = match x {
+    1 -> "hi",
+    _ -> 42,
+}
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "match arms have incompatible types"),
+        "should error on incompatible match arm types, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn match_arms_compatible_types_ok() {
+    let diags = check(
+        r#"
+const x = 1
+const _y = match x {
+    1 -> "hi",
+    _ -> "bye",
+}
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "match arms have incompatible types"),
+        "compatible match arms should not error, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── 5. If-else branch consistency ──────────────────────────
+
+#[test]
+fn if_else_incompatible_types_errors() {
+    let diags = check(
+        r#"
+const _x = if true { 1 } else { "hi" }
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "incompatible types"),
+        "should error on incompatible if-else branches, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn if_else_compatible_ok() {
+    let diags = check(
+        r#"
+const _x = if true { 1 } else { 2 }
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "incompatible types"),
+        "compatible if-else branches should not error, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── 6. Object destructuring ───────────────────────────────
+
+#[test]
+fn object_destructuring_gets_field_types() {
+    let program = crate::parser::Parser::new(
+        r#"
+type User = { name: string, age: number }
+const user = User(name: "hi", age: 21)
+const { name, age } = user
+const _x = name
+const _y = age
+"#,
+    )
+    .parse_program()
+    .expect("should parse");
+    let (diags, types) = Checker::new().check_with_types(&program);
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "destructuring should not produce errors, got: {:?}",
+        errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    // name should be string, age should be number
+    if let Some(name_ty) = types.get("name") {
+        assert_eq!(name_ty, "string", "name should be string, got: {name_ty}");
+    }
+    if let Some(age_ty) = types.get("age") {
+        assert_eq!(age_ty, "number", "age should be number, got: {age_ty}");
+    }
+}
