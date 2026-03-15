@@ -1202,9 +1202,7 @@ fn if_else_is_banned() {
     );
     let errors = result.unwrap_err();
     assert!(
-        errors
-            .iter()
-            .any(|e| e.message.contains("banned keyword")),
+        errors.iter().any(|e| e.message.contains("banned keyword")),
         "expected banned keyword error for `if`, got: {:?}",
         errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
