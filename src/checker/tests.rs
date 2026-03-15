@@ -42,7 +42,7 @@ fn basic_const_string() {
 #[test]
 fn undeclared_variable() {
     let diags = check("const x = y");
-    assert!(has_error_containing(&diags, "`y` is not defined"));
+    assert!(has_error_containing(&diags, "is not defined"));
 }
 
 // ── Rule 2: Brand enforcement ───────────────────────────────
@@ -104,7 +104,7 @@ fn tryFetch(url: string) -> Result<string, string> {
     );
     let unwrap_errors: Vec<_> = diags
         .iter()
-        .filter(|d| d.code.as_deref() == Some("E005") && d.message.contains("? operator requires"))
+        .filter(|d| d.code.as_deref() == Some("E005") && d.message.contains("operator requires"))
         .collect();
     assert!(unwrap_errors.is_empty());
 }
@@ -122,7 +122,7 @@ fn process() -> Result<number, string> {
     );
     assert!(has_error_containing(
         &diags,
-        "? can only be used on Result or Option"
+        "`?` can only be used on `Result` or `Option`"
     ));
 }
 
@@ -138,7 +138,7 @@ const x = result.value
     );
     assert!(has_error_containing(
         &diags,
-        "cannot access `.value` on Result"
+        "cannot access `.value` on `Result`"
     ));
 }
 
@@ -161,7 +161,7 @@ fn equality_different_types() {
 #[test]
 fn unused_variable_warning() {
     let diags = check("const x = 42");
-    assert!(has_warning_containing(&diags, "is never used"));
+    assert!(has_warning_containing(&diags, "unused variable"));
 }
 
 #[test]
@@ -188,7 +188,7 @@ const y = x
 #[test]
 fn unused_import_error() {
     let diags = check(r#"import { useState } from "react""#);
-    assert!(has_error_containing(&diags, "is never used"));
+    assert!(has_error_containing(&diags, "unused import"));
 }
 
 // ── Rule 10: Exported function return types ─────────────────
@@ -202,6 +202,43 @@ fn exported_function_needs_return_type() {
 #[test]
 fn exported_function_with_return_type_ok() {
     let diags = check("export fn add(a: number, b: number) -> number { return a }");
+    assert!(!has_error(&diags, "E010"));
+}
+
+// ── Return type mismatch ─────────────────────────────────────
+
+#[test]
+fn return_type_mismatch_errors() {
+    let diags = check(
+        r#"
+fn greet() -> string { 42 }
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "expected return type"),
+        "should error when body returns number but declared string, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn return_type_match_ok() {
+    let diags = check(
+        r#"
+fn greet() -> string { "hello" }
+"#,
+    );
+    assert!(!has_error_containing(&diags, "expected return type"),);
+}
+
+#[test]
+fn non_exported_function_return_type_not_required() {
+    // Non-exported functions can omit -> return type
+    let diags = check(
+        r#"
+fn helper(x: number) { x * 2 }
+"#,
+    );
     assert!(!has_error(&diags, "E010"));
 }
 
@@ -238,7 +275,7 @@ fn homogeneous_array() {
 #[test]
 fn mixed_array_error() {
     let diags = check(r#"const _x = [1, "two", 3]"#);
-    assert!(has_error_containing(&diags, "mixed array"));
+    assert!(has_error_containing(&diags, "mixed types"));
 }
 
 // ── Dead code detection ─────────────────────────────────────
@@ -274,7 +311,7 @@ const _x = HashedPassword("abc")
 #[test]
 fn floating_result_error() {
     let diags = check("Ok(42)");
-    assert!(has_error_containing(&diags, "unhandled Result"));
+    assert!(has_error_containing(&diags, "unhandled `Result`"));
 }
 
 // ── For Blocks ─────────────────────────────────────────────
@@ -501,7 +538,10 @@ const _t = Todo(id: "1", text: "hello")
 "#,
     );
     assert!(has_error(&diags, "E016"));
-    assert!(has_error_containing(&diags, "missing field `done`"));
+    assert!(has_error_containing(
+        &diags,
+        "missing required field `done`"
+    ));
 }
 
 #[test]
@@ -997,4 +1037,222 @@ const _r = 5 |> double
         "piping into function should not error, got: {:?}",
         diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
+}
+
+// ── Phase 1: Type Resolution Foundation ─────────────────────
+
+// ── 2. Member access on Named types ────────────────────────
+
+#[test]
+fn member_access_on_record_type_resolves_field() {
+    let diags = check(
+        r#"
+type User = { name: string, age: number }
+const u = User(name: "hi", age: 21)
+const _n = u.name
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "Unknown"),
+        "u.name should resolve to string, got errors: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    // Verify no errors at all (field access should succeed)
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "member access on record type should not produce errors, got: {:?}",
+        errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn member_access_unknown_field_errors() {
+    let diags = check(
+        r#"
+type User = { name: string }
+const u = User(name: "hi")
+const _n = u.nonexistent
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "has no field `nonexistent`"),
+        "should error on unknown field, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn member_access_on_non_record_errors() {
+    let diags = check(
+        r#"
+const x = 5
+const _n = x.name
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "cannot access"),
+        "should error on member access on number, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── 3. Constructor field type validation ───────────────────
+
+#[test]
+fn constructor_wrong_field_type_errors() {
+    let diags = check(
+        r#"
+type User = { name: string, age: number }
+const _u = User(name: 42, age: "old")
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "expected `string`, found `number`"),
+        "should error on wrong field type, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn constructor_correct_types_ok() {
+    let diags = check(
+        r#"
+type User = { name: string, age: number }
+const _u = User(name: "hi", age: 21)
+"#,
+    );
+    let type_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error && d.message.contains("expected"))
+        .collect();
+    assert!(
+        type_errors.is_empty(),
+        "correct constructor types should not error, got: {:?}",
+        type_errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn constructor_missing_field_errors_phase1() {
+    // This test verifies missing field detection (already exists as constructor_missing_required_field
+    // but let's add one that specifically tests the two-field case)
+    let diags = check(
+        r#"
+type User = { name: string, age: number }
+const _u = User(name: "hi")
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "missing required field `age`"),
+        "should error on missing required field, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── 4. Match arm type consistency ──────────────────────────
+
+#[test]
+fn match_arms_incompatible_types_errors() {
+    let diags = check(
+        r#"
+const x = 1
+const _y = match x {
+    1 -> "hi",
+    _ -> 42,
+}
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "match arms have incompatible types"),
+        "should error on incompatible match arm types, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn match_arms_compatible_types_ok() {
+    let diags = check(
+        r#"
+const x = 1
+const _y = match x {
+    1 -> "hi",
+    _ -> "bye",
+}
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "match arms have incompatible types"),
+        "compatible match arms should not error, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── 5. If-else branch consistency ──────────────────────────
+
+#[test]
+fn if_else_incompatible_types_errors() {
+    let diags = check(
+        r#"
+const _x = if true { 1 } else { "hi" }
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "incompatible types"),
+        "should error on incompatible if-else branches, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn if_else_compatible_ok() {
+    let diags = check(
+        r#"
+const _x = if true { 1 } else { 2 }
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "incompatible types"),
+        "compatible if-else branches should not error, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── 6. Object destructuring ───────────────────────────────
+
+#[test]
+fn object_destructuring_gets_field_types() {
+    let program = crate::parser::Parser::new(
+        r#"
+type User = { name: string, age: number }
+const user = User(name: "hi", age: 21)
+const { name, age } = user
+const _x = name
+const _y = age
+"#,
+    )
+    .parse_program()
+    .expect("should parse");
+    let (diags, types) = Checker::new().check_with_types(&program);
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "destructuring should not produce errors, got: {:?}",
+        errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    // name should be string, age should be number
+    if let Some(name_ty) = types.get("name") {
+        assert_eq!(name_ty, "string", "name should be string, got: {name_ty}");
+    }
+    if let Some(age_ty) = types.get("age") {
+        assert_eq!(age_ty, "number", "age should be number, got: {age_ty}");
+    }
 }

@@ -52,10 +52,13 @@ impl Checker {
                         if !ty.is_numeric() && !matches!(ty, Type::Unknown | Type::Var(_)) {
                             self.diagnostics.push(
                                 Diagnostic::error(
-                                    format!("cannot negate `{}`", ty.display_name()),
+                                    format!(
+                                        "cannot negate type `{}`, expected `number`",
+                                        ty.display_name()
+                                    ),
                                     expr.span,
                                 )
-                                .with_label("not a number")
+                                .with_label("expected `number`")
                                 .with_code("E001"),
                             );
                         }
@@ -80,18 +83,18 @@ impl Checker {
                     Some(_) => {
                         self.diagnostics.push(
                             Diagnostic::error(
-                                "? operator requires function to return Result or Option",
+                                "`?` operator requires function to return `Result` or `Option`",
                                 expr.span,
                             )
-                            .with_label("invalid ? usage")
-                            .with_help("Change the function's return type to Result or Option")
+                            .with_label("enclosing function does not return `Result` or `Option`")
+                            .with_help("change the function's return type to `Result` or `Option`")
                             .with_code("E005"),
                         );
                     }
                     None => {
                         self.diagnostics.push(
                             Diagnostic::error(
-                                "? operator can only be used inside a function",
+                                "`?` operator can only be used inside a function",
                                 expr.span,
                             )
                             .with_label("not inside a function")
@@ -107,12 +110,12 @@ impl Checker {
                         self.diagnostics.push(
                             Diagnostic::error(
                                 format!(
-                                    "? can only be used on Result or Option, found `{}`",
+                                    "`?` can only be used on `Result` or `Option`, found `{}`",
                                     ty.display_name()
                                 ),
                                 expr.span,
                             )
-                            .with_label("not a Result or Option")
+                            .with_label("not a `Result` or `Option`")
                             .with_code("E005"),
                         );
                         Type::Unknown
@@ -152,9 +155,9 @@ impl Checker {
                             format!("calling untrusted import `{name}` requires `try`"),
                             expr.span,
                         )
-                        .with_label("untrusted TS import")
+                        .with_label("untrusted import")
                         .with_help(format!(
-                            "Use `try {name}(...)` or mark the import as `trusted`"
+                            "use `try {name}(...)` or mark the import as `trusted`"
                         ))
                         .with_code("E014"),
                     );
@@ -271,7 +274,7 @@ impl Checker {
                     if !is_variant {
                         self.diagnostics.push(
                             Diagnostic::error(format!("unknown type `{type_name}`"), expr.span)
-                                .with_label("not a known type")
+                                .with_label("not defined")
                                 .with_code("E002"),
                         );
                     }
@@ -288,8 +291,8 @@ impl Checker {
                             ),
                             expr.span,
                         )
-                        .with_label("opaque type")
-                        .with_help("Use the module's exported constructor function instead")
+                        .with_label("opaque type cannot be constructed directly")
+                        .with_help("use the module's exported constructor function instead")
                         .with_code("E003"),
                     );
                 }
@@ -346,7 +349,14 @@ impl Checker {
                                     expr.span,
                                 )
                                 .with_label(format!("`{label}` is not a field of `{type_name}`"))
-                                .with_help(format!("available fields: {}", fields.join(", ")))
+                                .with_help(format!(
+                                    "available fields: {}",
+                                    fields
+                                        .iter()
+                                        .map(|f| format!("`{f}`"))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ))
                                 .with_code("E015"),
                             );
                         }
@@ -382,11 +392,11 @@ impl Checker {
                                 self.diagnostics.push(
                                     Diagnostic::error(
                                         format!(
-                                            "missing field `{field}` in `{type_name}` constructor"
+                                            "missing required field `{field}` in `{type_name}` constructor"
                                         ),
                                         expr.span,
                                     )
-                                    .with_label(format!("`{field}` is required"))
+                                    .with_label(format!("field `{field}` is required"))
                                     .with_code("E016"),
                                 );
                             }
@@ -407,12 +417,12 @@ impl Checker {
                             {
                                 self.diagnostics.push(
                                     Diagnostic::warning(
-                                        format!("field `{label}` from spread is overwritten"),
+                                        format!("field `{label}` from spread is overwritten by explicit field"),
                                         expr.span,
                                     )
                                     .with_label(format!("`{label}` exists in the spread source"))
                                     .with_help(
-                                        "The spread value will be replaced by the explicit field",
+                                        "the spread value will be replaced by the explicit field",
                                     )
                                     .with_code("W003"),
                                 );
@@ -420,14 +430,67 @@ impl Checker {
                         }
                     }
                 }
+
+                // Build a map of field name -> expected type from the type definition
+                let field_type_map: Option<Vec<(String, Type)>> = if let Some(ref info) = type_info
+                {
+                    match &info.def {
+                        TypeDef::Record(fields) => Some(
+                            fields
+                                .iter()
+                                .map(|f| (f.name.clone(), self.resolve_type(&f.type_ann)))
+                                .collect(),
+                        ),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                // Check each argument and validate types against declared fields
                 for arg in args {
                     match arg {
-                        Arg::Positional(e) | Arg::Named { value: e, .. } => {
+                        Arg::Named {
+                            label, value: e, ..
+                        } => {
+                            let arg_ty = self.check_expr(e);
+                            // Validate type against declared field type
+                            if let Some(ref field_types) = field_type_map
+                                && let Some((_, expected_ty)) =
+                                    field_types.iter().find(|(n, _)| n == label)
+                                && !self.types_compatible(expected_ty, &arg_ty)
+                                && !matches!(arg_ty, Type::Unknown | Type::Var(_))
+                            {
+                                self.diagnostics.push(
+                                    Diagnostic::error(
+                                        format!(
+                                            "field `{label}`: expected `{}`, found `{}`",
+                                            expected_ty.display_name(),
+                                            arg_ty.display_name()
+                                        ),
+                                        expr.span,
+                                    )
+                                    .with_label(format!(
+                                        "expected `{}`",
+                                        expected_ty.display_name()
+                                    ))
+                                    .with_code("E001"),
+                                );
+                            }
+                        }
+                        Arg::Positional(e) => {
                             self.check_expr(e);
                         }
                     }
                 }
 
+                // If this is a variant constructor, return the parent union type
+                // rather than Named(variant_name) so match arm types are consistent
+                if let Some(ty) = self.env.lookup(type_name).cloned()
+                    && let Type::Union { .. } = &ty
+                {
+                    return ty;
+                }
                 Type::Named(type_name.clone())
             }
 
@@ -438,14 +501,15 @@ impl Checker {
                     self.diagnostics.push(
                         Diagnostic::error(
                             format!(
-                                "cannot access `.{field}` on Result - use `match` or `?` first"
+                                "cannot access `.{field}` on `Result` - use `match` or `?` first"
                             ),
                             expr.span,
                         )
-                        .with_label("Result not narrowed")
-                        .with_help("Use `match result { Ok(v) -> ..., Err(e) -> ... }`")
+                        .with_label("`Result` must be narrowed first")
+                        .with_help("use `match result { Ok(v) -> ..., Err(e) -> ... }`")
                         .with_code("E006"),
                     );
+                    return Type::Unknown;
                 }
                 if let Type::Union { name, .. } = &obj_ty {
                     self.diagnostics.push(
@@ -455,16 +519,64 @@ impl Checker {
                             ),
                             expr.span,
                         )
-                        .with_label("union not narrowed")
-                        .with_help("Use `match` to narrow the union first")
+                        .with_label("union must be narrowed first")
+                        .with_help("use `match` to narrow the union first")
                         .with_code("E006"),
                     );
+                    return Type::Unknown;
                 }
-                if let Type::Record(fields) = &obj_ty
-                    && let Some((_, ty)) = fields.iter().find(|(n, _)| n == field)
-                {
-                    return ty.clone();
+
+                // Resolve Named types to their concrete definition
+                let concrete = self.resolve_type_to_concrete(&obj_ty);
+
+                if let Type::Record(fields) = &concrete {
+                    if let Some((_, ty)) = fields.iter().find(|(n, _)| n == field) {
+                        return ty.clone();
+                    }
+                    // Field not found on a known record type
+                    let type_name = if let Type::Named(name) = &obj_ty {
+                        format!("`{name}`")
+                    } else {
+                        format!("`{}`", obj_ty.display_name())
+                    };
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            format!("type {type_name} has no field `{field}`"),
+                            expr.span,
+                        )
+                        .with_label("unknown field")
+                        .with_help(format!(
+                            "available fields: {}",
+                            fields
+                                .iter()
+                                .map(|(n, _)| format!("`{n}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                        .with_code("E017"),
+                    );
+                    return Type::Unknown;
                 }
+
+                // Error on member access on primitive types
+                match &obj_ty {
+                    Type::Number | Type::String | Type::Bool | Type::Unit => {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                format!(
+                                    "cannot access `.{field}` on type `{}`",
+                                    obj_ty.display_name()
+                                ),
+                                expr.span,
+                            )
+                            .with_label("not a record type")
+                            .with_code("E017"),
+                        );
+                        return Type::Unknown;
+                    }
+                    _ => {}
+                }
+
                 Type::Unknown
             }
 
@@ -511,7 +623,25 @@ impl Checker {
                     let arm_type = self.check_expr(&arm.body);
                     self.env.pop_scope();
 
-                    if result_type.is_none() {
+                    if let Some(ref first_type) = result_type {
+                        if !self.types_compatible(first_type, &arm_type)
+                            && !matches!(arm_type, Type::Unknown | Type::Var(_))
+                            && !matches!(first_type, Type::Unknown | Type::Var(_))
+                        {
+                            self.diagnostics.push(
+                                Diagnostic::error(
+                                    format!(
+                                        "match arms have incompatible types: first arm returns `{}`, this arm returns `{}`",
+                                        first_type.display_name(),
+                                        arm_type.display_name()
+                                    ),
+                                    arm.body.span,
+                                )
+                                .with_label(format!("expected `{}`", first_type.display_name()))
+                                .with_code("E001"),
+                            );
+                        }
+                    } else {
                         result_type = Some(arm_type);
                     }
                 }
@@ -526,7 +656,24 @@ impl Checker {
                 self.check_expr(condition);
                 let then_ty = self.check_expr(then_branch);
                 if let Some(else_expr) = else_branch {
-                    self.check_expr(else_expr);
+                    let else_ty = self.check_expr(else_expr);
+                    if !self.types_compatible(&then_ty, &else_ty)
+                        && !matches!(then_ty, Type::Unknown | Type::Var(_))
+                        && !matches!(else_ty, Type::Unknown | Type::Var(_))
+                    {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                format!(
+                                    "if/else branches have incompatible types: `if` returns `{}`, `else` returns `{}`",
+                                    then_ty.display_name(),
+                                    else_ty.display_name()
+                                ),
+                                else_expr.span,
+                            )
+                            .with_label(format!("expected `{}`", then_ty.display_name()))
+                            .with_code("E001"),
+                        );
+                    }
                 }
                 then_ty
             }
@@ -590,9 +737,9 @@ impl Checker {
                     if found_return {
                         // Rule 10: Dead code detection
                         self.diagnostics.push(
-                            Diagnostic::error("unreachable code", item.span)
-                                .with_label("this code is unreachable")
-                                .with_help("Remove this code")
+                            Diagnostic::error("unreachable code after `return`", item.span)
+                                .with_label("this code will never execute")
+                                .with_help("remove this code or move it before the `return`")
                                 .with_code("E011"),
                         );
                         break;
@@ -634,11 +781,11 @@ impl Checker {
                         {
                             self.diagnostics.push(
                                 Diagnostic::error(
-                                    "mixed array needs explicit type annotation",
+                                    "array elements have mixed types, add an explicit type annotation",
                                     el.span,
                                 )
                                 .with_label("mismatched element type")
-                                .with_help("Add an explicit type annotation to the array")
+                                .with_help("add an explicit type annotation to the array")
                                 .with_code("E004"),
                             );
                         }
@@ -684,8 +831,8 @@ impl Checker {
                             ),
                             span,
                         )
-                        .with_label("type mismatch in comparison")
-                        .with_help("Convert one side to match the other")
+                        .with_label("mismatched types")
+                        .with_help("both sides of `==` must have the same type")
                         .with_code("E008"),
                     );
                 }
@@ -697,11 +844,11 @@ impl Checker {
                     self.diagnostics.push(
                         Diagnostic::error(
                             format!(
-                                "cannot compare `{tag_l}` with `{tag_r}` - different branded types"
+                                "cannot compare branded type `{tag_l}` with `{tag_r}`"
                             ),
                             span,
                         )
-                        .with_label("brand mismatch")
+                        .with_label("different branded types")
                         .with_help(format!(
                             "`{tag_l}` and `{tag_r}` are distinct types even though they share the same base type"
                         ))
@@ -720,8 +867,8 @@ impl Checker {
                             "use template literal instead of `+` for string concatenation",
                             span,
                         )
-                        .with_label("string concat with +")
-                        .with_help("Use `${a}${b}` instead")
+                        .with_label("prefer template literal")
+                        .with_help("use `\"${a}${b}\"` instead")
                         .with_code("W002"),
                     );
                 }
@@ -1013,5 +1160,38 @@ impl Checker {
             Type::Result { .. } => Some("Result"),
             _ => None,
         }
+    }
+
+    /// Resolve a type to its concrete definition, following Named type lookups.
+    fn resolve_type_to_concrete(&mut self, ty: &Type) -> Type {
+        // We need to clone the env reference data to avoid borrow issues
+        let resolve_fn = |type_expr: &crate::parser::ast::TypeExpr| -> Type {
+            // Simple resolution without mutating self — just map named types
+            match &type_expr.kind {
+                crate::parser::ast::TypeExprKind::Named { name, .. } => match name.as_str() {
+                    "number" => Type::Number,
+                    "string" => Type::String,
+                    "boolean" => Type::Bool,
+                    "()" => Type::Unit,
+                    "undefined" => Type::Undefined,
+                    _ => Type::Named(name.to_string()),
+                },
+                crate::parser::ast::TypeExprKind::Array(inner) => {
+                    let inner_resolved = match &inner.kind {
+                        crate::parser::ast::TypeExprKind::Named { name, .. } => match name.as_str()
+                        {
+                            "number" => Type::Number,
+                            "string" => Type::String,
+                            "boolean" => Type::Bool,
+                            _ => Type::Named(name.to_string()),
+                        },
+                        _ => Type::Unknown,
+                    };
+                    Type::Array(Box::new(inner_resolved))
+                }
+                _ => Type::Unknown,
+            }
+        };
+        self.env.resolve_to_concrete(ty, &resolve_fn)
     }
 }
