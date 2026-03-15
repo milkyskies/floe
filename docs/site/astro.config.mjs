@@ -1,10 +1,21 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 import starlightLlmsTxt from "starlight-llms-txt";
+import floeGrammar from "../../editors/vscode/syntaxes/floe.tmLanguage.json";
+
+const floeLang = {
+  ...floeGrammar,
+  aliases: ["floe", "fl"],
+};
 
 export default defineConfig({
   site: "https://milkyskies.github.io",
   base: "/floe",
+  markdown: {
+    shikiConfig: {
+      langs: [floeLang],
+    },
+  },
   vite: {
     ssr: {
       noExternal: ["zod"],
