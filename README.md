@@ -13,7 +13,3 @@ Floe is a strict, functional language that compiles to TypeScript. It works with
 any TypeScript or React library. The compiler is written in Rust.
 
 For more information see [the docs](https://milkyskies.github.io/floe).
-
-## License
-
-MIT
