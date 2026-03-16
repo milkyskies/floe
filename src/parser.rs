@@ -522,8 +522,8 @@ impl Parser {
 
         // Check if this is a record type (starts with `{`)
         if self.check(&TokenKind::LeftBrace) {
-            let fields = self.parse_record_fields()?;
-            return Ok(TypeDef::Record(fields));
+            let entries = self.parse_record_entries()?;
+            return Ok(TypeDef::Record(entries));
         }
 
         // Otherwise it's a type alias
@@ -609,11 +609,35 @@ impl Parser {
         })
     }
 
+    fn parse_record_entries(&mut self) -> Result<Vec<RecordEntry>, ParseError> {
+        self.expect(&TokenKind::LeftBrace)?;
+        let entries = self.parse_comma_separated(|p| p.parse_record_entry())?;
+        self.expect(&TokenKind::RightBrace)?;
+        Ok(entries)
+    }
+
     fn parse_record_fields(&mut self) -> Result<Vec<RecordField>, ParseError> {
         self.expect(&TokenKind::LeftBrace)?;
         let fields = self.parse_comma_separated(|p| p.parse_record_field())?;
         self.expect(&TokenKind::RightBrace)?;
         Ok(fields)
+    }
+
+    fn parse_record_entry(&mut self) -> Result<RecordEntry, ParseError> {
+        // Check for spread: `...TypeName`
+        if self.check(&TokenKind::DotDotDot) {
+            let start_span = self.current_span();
+            self.advance(); // consume `...`
+            let type_name = self.expect_identifier()?;
+            let end_span = self.previous_span();
+            return Ok(RecordEntry::Spread(RecordSpread {
+                type_name,
+                span: self.merge_spans(start_span, end_span),
+            }));
+        }
+
+        self.parse_record_field()
+            .map(|f| RecordEntry::Field(Box::new(f)))
     }
 
     fn parse_record_field(&mut self) -> Result<RecordField, ParseError> {
@@ -1204,6 +1228,27 @@ impl Parser {
     fn expect_identifier(&mut self) -> Result<String, ParseError> {
         match self.current_kind() {
             TokenKind::Identifier(name) => {
+                self.advance();
+                Ok(name)
+            }
+            _ => Err(self.error(&format!(
+                "expected identifier, found {:?}",
+                self.current_kind()
+            ))),
+        }
+    }
+
+    /// Like `expect_identifier` but also accepts banned keywords.
+    /// Used for member access where banned keywords are valid field names
+    /// (e.g. `Array.any`, `Array.all`).
+    fn expect_identifier_or_keyword(&mut self) -> Result<String, ParseError> {
+        match self.current_kind() {
+            TokenKind::Identifier(name) => {
+                self.advance();
+                Ok(name)
+            }
+            TokenKind::Banned(banned) => {
+                let name = banned.as_str().to_string();
                 self.advance();
                 Ok(name)
             }
