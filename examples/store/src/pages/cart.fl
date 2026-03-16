@@ -1,14 +1,13 @@
 import trusted { useState } from "react"
-import { CartItem, Product, OrderStatus, OrderId, ShippingInfo, CheckoutError } from "../types"
+import { CartItem, Product, ProductId, OrderStatus, OrderId } from "../types"
 import { for Array, formatPrice } from "../product"
-import { validateCheckout, processCheckout } from "../checkout"
 
 // ── Cart item row ──────────────────────────────────────
 
 fn CartItemRow(props: {
     item: CartItem,
-    onUpdateQty: (number, number) -> (),
-    onRemove: (number) -> (),
+    onUpdateQty: (ProductId, number) -> (),
+    onRemove: (ProductId) -> (),
 }) -> JSX.Element {
     const item = props.item
     const product = item.product
@@ -107,8 +106,8 @@ fn OrderSummary(props: {
 
 export fn CartPage(props: {
     cart: Array<CartItem>,
-    onUpdateQty: (number, number) -> (),
-    onRemove: (number) -> (),
+    onUpdateQty: (ProductId, number) -> (),
+    onRemove: (ProductId) -> (),
 }) -> JSX.Element {
     const [orderStatus, setOrderStatus] = useState<OrderStatus>(OrderStatus.Pending)
 
@@ -117,11 +116,11 @@ export fn CartPage(props: {
         setOrderStatus(Confirmed(orderId))
     }
 
-    const count = props.cart |> itemCount
+    const _count = props.cart |> itemCount
 
     <div>
         <h1 className="mb-6 text-3xl font-bold">
-            {`Cart (${count} item${count |> match { 1 -> "", _ -> "s" }})`}
+            {`Cart (${_count} item${_count |> match { 1 -> "", _ -> "s" }})`}
         </h1>
 
         {props.cart |> match {

@@ -5,20 +5,60 @@
 
 import { Product, ProductId, Review, ApiError } from "./types"
 
+// ── Response types for parsing ─────────────────────────
+
+type ProductDetailResponse = {
+    id: number,
+    title: string,
+    description: string,
+    category: string,
+    price: number,
+    discountPercentage: number,
+    rating: number,
+    stock: number,
+    tags: Array<string>,
+    brand: string,
+    thumbnail: string,
+    images: Array<string>,
+    reviews: Array<Review>,
+}
+
+type ProductListResponse = {
+    products: Array<Product>,
+    total: number,
+}
+
+export type CategoryResponse = {
+    slug: string,
+    name: string,
+}
+
 // ── Single product fetch ───────────────────────────────
 
 export async fn fetchProduct(id: ProductId) -> Result<(Product, Array<Review>), ApiError> {
     const data = await Http.get(`https://dummyjson.com/products/${id}`)?
         |> Http.json?
+        |> parse<ProductDetailResponse>?
 
-    const product = data.product |> parse<Product>?
-    const reviews = data.reviews |> parse<Array<Review>>?
+    const product = Product(
+        id: ProductId(data.id),
+        title: data.title,
+        description: data.description,
+        category: data.category,
+        price: data.price,
+        discountPercentage: data.discountPercentage,
+        rating: data.rating,
+        stock: data.stock,
+        tags: data.tags,
+        brand: data.brand,
+        thumbnail: data.thumbnail,
+        images: data.images,
+    )
 
-    (product, reviews)
+    Ok((product, data.reviews))
 }
 
 // ── Product list with filters ──────────────────────────
-// Default parameter values — caller only specifies what they need.
 
 export async fn fetchProducts(
     category: string = "",
@@ -33,29 +73,29 @@ export async fn fetchProducts(
             (_, q) -> `https://dummyjson.com/products/search?q=${q}&limit=${limit}&skip=${skip}`,
         }
 
-    const data = await Http.get(url)? |> Http.json?
-    const products = data.products |> parse<Array<Product>>?
+    const data = await Http.get(url)?
+        |> Http.json?
+        |> parse<ProductListResponse>?
 
-    (products, data.total)
+    Ok((data.products, data.total))
 }
 
 // ── Categories ─────────────────────────────────────────
 
-export async fn fetchCategories() -> Result<Array<(string, string)>, ApiError> {
+// TODO: needs compiler fix - Array.map return type inference doesn't narrow through generics
+export async fn fetchCategories() -> Result<Array<CategoryResponse>, ApiError> {
     const data = await Http.get("https://dummyjson.com/products/categories")?
         |> Http.json?
-        |> parse<Array<{ slug: string, name: string }>>?
+        |> parse<Array<CategoryResponse>>?
 
-    data |> Array.map(|c| (c.slug, c.name))
+    Ok(data)
 }
 
 // ── Parallel dashboard fetch ───────────────────────────
-// collect runs all fetches in parallel via Promise.allSettled.
-// If any fail, ALL errors are reported — not just the first.
 
 export async fn fetchStoreDashboard(
     category: string = "",
-) -> Result<(Array<Product>, Array<(string, string)>), Array<ApiError>> {
+) -> Result<(Array<Product>, Array<CategoryResponse>), Array<ApiError>> {
     collect {
         const (products, _total) = await fetchProducts(category: category)?
         const categories = await fetchCategories()?

@@ -1,4 +1,4 @@
-import { Product, CartItem, SortOrder, PriceRange, Display, Discountable } from "./types"
+import { Product, ProductId, CartItem, SortOrder, PriceRange, Display, Discountable } from "./types"
 
 // ── Trait implementations ──────────────────────────────
 
@@ -32,14 +32,14 @@ export for Product fn stockLabel(self) -> string {
 export for Product fn ratingStars(self) -> string {
     const full = Math.floor(self.rating)
 
-    Array.from({ length: full }, |_| "*") |> Array.join("")
+    "*" |> String.repeat(full)
 }
 
 // ── Cart operations ────────────────────────────────────
 
 for Array<CartItem> {
     export fn addItem(self, product: Product, qty: number = 1) -> Array<CartItem> {
-        const existing = self |> Array.findIndex(.product.id == product.id)
+        const existing = self |> Array.findIndex(|item| item.product.id == product.id)
 
         existing |> match {
             -1 -> self |> Array.append(CartItem(product: product, quantity: qty)),
@@ -52,11 +52,11 @@ for Array<CartItem> {
         }
     }
 
-    export fn removeItem(self, productId: number) -> Array<CartItem> {
-        self |> Array.filter(.product.id != productId)
+    export fn removeItem(self, productId: ProductId) -> Array<CartItem> {
+        self |> Array.filter(|item| item.product.id != productId)
     }
 
-    export fn updateQuantity(self, productId: number, qty: number) -> Array<CartItem> {
+    export fn updateQuantity(self, productId: ProductId, qty: number) -> Array<CartItem> {
         qty |> match {
             0 -> self |> removeItem(productId),
             _ -> self |> Array.map(|item|
@@ -70,19 +70,15 @@ for Array<CartItem> {
 
     // Returns (subtotal, discount, total) as a tuple
     export fn totals(self) -> (number, number, number) {
-        const subtotal = self
-            |> Array.map(|item| item.product.price * item.quantity)
-            |> Array.sum
+        const subtotal = self |> Array.reduce(|acc: number, item: CartItem| acc + item.product.price * item.quantity, 0)
 
-        const discounted = self
-            |> Array.map(|item| (item.product |> effectivePrice) * item.quantity)
-            |> Array.sum
+        const discounted = self |> Array.reduce(|acc: number, item: CartItem| acc + (item.product |> effectivePrice) * item.quantity, 0)
 
         (subtotal, subtotal - discounted, discounted)
     }
 
     export fn itemCount(self) -> number {
-        self |> Array.map(.quantity) |> Array.sum
+        self |> Array.reduce(|acc, item| acc + item.quantity, 0)
     }
 
     export fn isEmpty(self) -> boolean {
@@ -102,7 +98,7 @@ fn compareBy(order: SortOrder, a: Product, b: Product) -> number {
 }
 
 export fn sortProducts(products: Array<Product>, order: SortOrder) -> Array<Product> {
-    products |> Array.sort(compareBy(order, _, _))
+    products |> Array.sort(|a, b| compareBy(order, a, b))
 }
 
 // ── Price filtering with range matching ────────────────

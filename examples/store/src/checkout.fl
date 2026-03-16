@@ -57,7 +57,7 @@ export fn processCheckout(
     cart: Array<CartItem>,
     shipping: ShippingInfo,
 ) -> Result<OrderStatus, Array<CheckoutError>> {
-    const _validated = cart |> validateCheckout(_, shipping)?
+    const _validated = validateCheckout(cart, shipping)?
     const orderId = OrderId(Math.floor(Math.random() * 10_000))
 
     Ok(Confirmed(orderId))
