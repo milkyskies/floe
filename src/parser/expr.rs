@@ -702,10 +702,7 @@ impl Parser {
                     banned.as_str(),
                     banned.help_message()
                 );
-                Err(ParseError {
-                    message: msg,
-                    span: start_span,
-                })
+                Err(self.error_with_kind(&msg, super::ParseErrorKind::BannedKeyword))
             }
 
             _ => Err(self.error(&format!("unexpected token: {:?}", self.current_kind()))),
@@ -760,39 +757,7 @@ impl Parser {
 
     /// Parse a single lambda parameter, which can be a plain identifier or a destructuring pattern.
     fn parse_lambda_param(&mut self) -> Result<Param, ParseError> {
-        if self.check(&TokenKind::LeftBrace) {
-            // Object destructuring: `{ field1, field2 }`
-            let start_span = self.current_span();
-            self.advance(); // consume `{`
-            let mut fields = Vec::new();
-            while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-                fields.push(self.expect_identifier()?);
-                if !self.check(&TokenKind::Comma) {
-                    break;
-                }
-                self.advance();
-            }
-            self.expect(&TokenKind::RightBrace)?;
-            let end_span = self.previous_span();
-
-            // Type annotation after destructure: `{ x, y }: Type`
-            let type_ann = if self.check(&TokenKind::Colon) {
-                self.advance();
-                Some(self.parse_type_expr()?)
-            } else {
-                None
-            };
-
-            Ok(Param {
-                name: "_destructured".to_string(),
-                type_ann,
-                default: None,
-                destructure: Some(ParamDestructure::Object(fields)),
-                span: self.merge_spans(start_span, end_span),
-            })
-        } else {
-            self.parse_param()
-        }
+        self.parse_param_in_context(super::ParamContext::Lambda)
     }
 
     // ── Dot Shorthand ────────────────────────────────────────────

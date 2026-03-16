@@ -13,11 +13,40 @@ use crate::lexer::token::{TemplatePart as LexTemplatePart, Token, TokenKind};
 use crate::lower::lower_program;
 use ast::*;
 
+/// Classification of parse errors for structured diagnostic handling.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParseErrorKind {
+    /// A banned keyword was used (e.g. `let`, `var`).
+    BannedKeyword,
+    /// An unexpected token was encountered.
+    UnexpectedToken,
+    /// A JSX closing tag did not match the opening tag.
+    MismatchedTag,
+    /// General parse error (default).
+    General,
+}
+
+impl ParseErrorKind {
+    /// Classify a parse error message into a kind.
+    pub fn classify(message: &str) -> Self {
+        if message.contains("banned keyword") {
+            Self::BannedKeyword
+        } else if message.contains("expected") {
+            Self::UnexpectedToken
+        } else if message.contains("mismatched closing tag") {
+            Self::MismatchedTag
+        } else {
+            Self::General
+        }
+    }
+}
+
 /// A parse error with location and message.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
     pub message: String,
     pub span: Span,
+    pub kind: ParseErrorKind,
 }
 
 impl std::fmt::Display for ParseError {
@@ -28,6 +57,19 @@ impl std::fmt::Display for ParseError {
             self.span.line, self.span.column, self.message
         )
     }
+}
+
+/// Context for parameter parsing, determining which features are available.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ParamContext {
+    /// Regular function parameter: name, optional type, optional default.
+    Function,
+    /// Trait method parameter: allows `self` keyword.
+    Trait,
+    /// For-block function parameter: allows `self` keyword.
+    ForBlock,
+    /// Lambda parameter: allows object destructuring.
+    Lambda,
 }
 
 /// The Floe parser. Produces an AST from a token stream.
@@ -72,9 +114,13 @@ impl Parser {
             return Err(cst_parse
                 .errors
                 .into_iter()
-                .map(|e| ParseError {
-                    message: e.message,
-                    span: e.span,
+                .map(|e| {
+                    let kind = ParseErrorKind::classify(&e.message);
+                    ParseError {
+                        message: e.message,
+                        span: e.span,
+                        kind,
+                    }
                 })
                 .collect());
         }
@@ -346,7 +392,59 @@ impl Parser {
     }
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {
+        self.parse_param_in_context(ParamContext::Function)
+    }
+
+    /// Unified parameter parser that handles all parameter contexts.
+    fn parse_param_in_context(&mut self, context: ParamContext) -> Result<Param, ParseError> {
         let start_span = self.current_span();
+
+        // Handle `self` keyword in trait and for-block contexts
+        if matches!(context, ParamContext::Trait | ParamContext::ForBlock)
+            && self.check(&TokenKind::SelfKw)
+        {
+            self.advance();
+            let end_span = self.previous_span();
+            return Ok(Param {
+                name: "self".to_string(),
+                type_ann: Option::None,
+                default: Option::None,
+                destructure: None,
+                span: self.merge_spans(start_span, end_span),
+            });
+        }
+
+        // Handle object destructuring in lambda context
+        if context == ParamContext::Lambda && self.check(&TokenKind::LeftBrace) {
+            self.advance(); // consume `{`
+            let mut fields = Vec::new();
+            while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+                fields.push(self.expect_identifier()?);
+                if !self.check(&TokenKind::Comma) {
+                    break;
+                }
+                self.advance();
+            }
+            self.expect(&TokenKind::RightBrace)?;
+            let end_span = self.previous_span();
+
+            let type_ann = if self.check(&TokenKind::Colon) {
+                self.advance();
+                Some(self.parse_type_expr()?)
+            } else {
+                None
+            };
+
+            return Ok(Param {
+                name: "_destructured".to_string(),
+                type_ann,
+                default: None,
+                destructure: Some(ParamDestructure::Object(fields)),
+                span: self.merge_spans(start_span, end_span),
+            });
+        }
+
+        // Regular parameter: name [: type] [= default]
         let name = self.expect_identifier()?;
 
         let type_ann = if self.check(&TokenKind::Colon) {
@@ -647,23 +745,7 @@ impl Parser {
     }
 
     fn parse_trait_param(&mut self) -> Result<Param, ParseError> {
-        let start_span = self.current_span();
-
-        // Handle `self` keyword as parameter
-        if self.check(&TokenKind::SelfKw) {
-            self.advance();
-            let end_span = self.previous_span();
-            return Ok(Param {
-                name: "self".to_string(),
-                type_ann: Option::None,
-                default: Option::None,
-                destructure: None,
-                span: self.merge_spans(start_span, end_span),
-            });
-        }
-
-        // Regular parameter
-        self.parse_param()
+        self.parse_param_in_context(ParamContext::Trait)
     }
 
     /// Parse a function declaration inside a `for` block.
@@ -705,23 +787,7 @@ impl Parser {
     /// Parse a parameter inside a `for` block function.
     /// Handles `self` as a special parameter name (no type annotation needed).
     fn parse_for_block_param(&mut self) -> Result<Param, ParseError> {
-        let start_span = self.current_span();
-
-        // Handle `self` keyword as parameter
-        if self.check(&TokenKind::SelfKw) {
-            self.advance();
-            let end_span = self.previous_span();
-            return Ok(Param {
-                name: "self".to_string(),
-                type_ann: Option::None, // type inferred from for block
-                default: Option::None,
-                destructure: None,
-                span: self.merge_spans(start_span, end_span),
-            });
-        }
-
-        // Regular parameter
-        self.parse_param()
+        self.parse_param_in_context(ParamContext::ForBlock)
     }
 
     // ── Test Blocks ──────────────────────────────────────────────
@@ -1134,6 +1200,15 @@ impl Parser {
         ParseError {
             message: message.to_string(),
             span: self.current_span(),
+            kind: ParseErrorKind::classify(message),
+        }
+    }
+
+    fn error_with_kind(&self, message: &str, kind: ParseErrorKind) -> ParseError {
+        ParseError {
+            message: message.to_string(),
+            span: self.current_span(),
+            kind,
         }
     }
 

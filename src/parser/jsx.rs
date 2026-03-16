@@ -140,9 +140,10 @@ impl Parser {
         self.expect(&TokenKind::Slash)?;
         let closing_name = self.expect_identifier()?;
         if closing_name != name {
-            return Err(self.error(&format!(
-                "mismatched closing tag: expected </{name}>, found </{closing_name}>"
-            )));
+            return Err(self.error_with_kind(
+                &format!("mismatched closing tag: expected </{name}>, found </{closing_name}>"),
+                super::ParseErrorKind::MismatchedTag,
+            ));
         }
         self.expect(&TokenKind::GreaterThan)?;
         let end_span = self.previous_span();

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::parser::ast::*;
 
-use super::Codegen;
+use super::{Codegen, TAG_FIELD, VALUE_FIELD};
 
 const THROW_NON_EXHAUSTIVE: &str = "(() => { throw new Error(\"non-exhaustive match\"); })()";
 
@@ -122,7 +122,7 @@ impl Codegen {
             PatternKind::Variant { name, fields } => {
                 // Check tag
                 self.emit_expr(subject);
-                self.push(&format!(".tag === \"{}\"", name));
+                self.push(&format!(".{TAG_FIELD} === \"{}\"", name));
 
                 // Nested conditions for sub-patterns
                 for (i, field_pat) in fields.iter().enumerate() {
@@ -133,7 +133,7 @@ impl Codegen {
                         self.push(" && ");
                         // Access the field — for single-field variants use .value
                         let field_access = if fields.len() == 1 {
-                            format!("{}.value", self.expr_to_string(subject))
+                            format!("{}.{VALUE_FIELD}", self.expr_to_string(subject))
                         } else {
                             format!("{}._{i}", self.expr_to_string(subject))
                         };
@@ -340,7 +340,7 @@ fn collect_bindings_inner(
                 {
                     format!("{}.{}", expr_to_str(subject), fname)
                 } else if fields.len() == 1 {
-                    format!("{}.value", expr_to_str(subject))
+                    format!("{}.{VALUE_FIELD}", expr_to_str(subject))
                 } else {
                     format!("{}._{i}", expr_to_str(subject))
                 };

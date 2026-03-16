@@ -54,6 +54,7 @@ impl<'src> Lowerer<'src> {
                     self.errors.push(ParseError {
                         message: format!("parse error: {text}"),
                         span: self.node_span(&child),
+                        kind: crate::parser::ParseErrorKind::General,
                     });
                 }
                 _ => {}

@@ -1,4 +1,5 @@
 use super::*;
+use super::{ERROR_FIELD, OK_FIELD, TAG_FIELD, VALUE_FIELD};
 
 const DEEP_EQUAL_FN: &str = "__zenEq";
 const THROW_NOT_IMPLEMENTED: &str = "(() => { throw new Error(\"not implemented\"); })()";
@@ -29,7 +30,7 @@ impl Codegen {
             ExprKind::Identifier(name) => {
                 if self.unit_variants.contains(name.as_str()) {
                     // Zero-arg union variant: `All` → `{ tag: "All" }`
-                    self.push("{ tag: \"");
+                    self.push(&format!("{{ {TAG_FIELD}: \""));
                     self.push(name);
                     self.push("\" }");
                 } else {
@@ -134,7 +135,7 @@ impl Codegen {
 
                 self.push("{ ");
                 if is_variant {
-                    self.push("tag: \"");
+                    self.push(&format!("{TAG_FIELD}: \""));
                     self.push(type_name);
                     self.push("\"");
                     if !args.is_empty() || spread.is_some() {
@@ -165,7 +166,7 @@ impl Codegen {
                         .get(field.as_str())
                         .is_some_and(|(union_name, _)| union_name == type_name)
                 {
-                    self.push("{ tag: \"");
+                    self.push(&format!("{{ {TAG_FIELD}: \""));
                     self.push(field);
                     self.push("\" }");
                 } else {
@@ -236,24 +237,26 @@ impl Codegen {
             ExprKind::Try(inner) => {
                 let has_await = expr_contains_await(inner);
                 if has_await {
-                    self.push("await (async () => { try { return { ok: true as const, value: ");
+                    self.push(&format!("await (async () => {{ try {{ return {{ {OK_FIELD}: true as const, {VALUE_FIELD}: "));
                 } else {
-                    self.push("(() => { try { return { ok: true as const, value: ");
+                    self.push(&format!(
+                        "(() => {{ try {{ return {{ {OK_FIELD}: true as const, {VALUE_FIELD}: "
+                    ));
                 }
                 self.emit_expr(inner);
-                self.push(" }; } catch (_e) { return { ok: false as const, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()");
+                self.push(&format!(" }}; }} catch (_e) {{ return {{ {OK_FIELD}: false as const, {ERROR_FIELD}: _e instanceof Error ? _e : new Error(String(_e)) }}; }} }})()"));
             }
 
             // Ok(value) → { ok: true, value: value }
             ExprKind::Ok(inner) => {
-                self.push("{ ok: true as const, value: ");
+                self.push(&format!("{{ {OK_FIELD}: true as const, {VALUE_FIELD}: "));
                 self.emit_expr(inner);
                 self.push(" }");
             }
 
             // Err(error) → { ok: false, error: error }
             ExprKind::Err(inner) => {
-                self.push("{ ok: false as const, error: ");
+                self.push(&format!("{{ {OK_FIELD}: false as const, {ERROR_FIELD}: "));
                 self.emit_expr(inner);
                 self.push(" }");
             }
