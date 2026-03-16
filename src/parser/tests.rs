@@ -183,6 +183,45 @@ fn unwrap_operator() {
     assert!(matches!(expr, ExprKind::Unwrap(_)));
 }
 
+#[test]
+fn pipe_then_unwrap() {
+    // `x |> f?` should parse as `(x |> f)?`, not `x |> (f?)`
+    let expr = first_expr("x |> f?");
+    match &expr {
+        ExprKind::Unwrap(inner) => {
+            assert!(
+                matches!(inner.kind, ExprKind::Pipe { .. }),
+                "expected Unwrap(Pipe), got Unwrap({:?})",
+                inner.kind
+            );
+        }
+        _ => panic!("expected Unwrap, got {expr:?}"),
+    }
+}
+
+#[test]
+fn pipe_chain_then_unwrap() {
+    // `x |> f |> g?` should parse as `(x |> f |> g)?`
+    let expr = first_expr("x |> f |> g?");
+    match &expr {
+        ExprKind::Unwrap(inner) => {
+            assert!(
+                matches!(inner.kind, ExprKind::Pipe { .. }),
+                "expected Unwrap(Pipe), got Unwrap({:?})",
+                inner.kind
+            );
+            // The inner pipe's left should also be a pipe (x |> f)
+            if let ExprKind::Pipe { left, .. } = &inner.kind {
+                assert!(
+                    matches!(left.kind, ExprKind::Pipe { .. }),
+                    "expected chained pipe"
+                );
+            }
+        }
+        _ => panic!("expected Unwrap, got {expr:?}"),
+    }
+}
+
 // ── Function Calls ───────────────────────────────────────────
 
 #[test]
@@ -1837,5 +1876,61 @@ fn collect_block_with_const() {
             assert_eq!(items.len(), 2);
         }
         other => panic!("expected Collect, got {other:?}"),
+    }
+}
+
+// ── Single-variant union newtypes ───────────────────────────
+
+#[test]
+fn newtype_parses_as_single_variant_union() {
+    let item = first_item("type ProductId = ProductId(number)");
+    match item {
+        ItemKind::TypeDecl(decl) => {
+            assert_eq!(decl.name, "ProductId");
+            match &decl.def {
+                TypeDef::Union(variants) => {
+                    assert_eq!(variants.len(), 1);
+                    assert_eq!(variants[0].name, "ProductId");
+                    assert_eq!(variants[0].fields.len(), 1);
+                    assert!(variants[0].fields[0].name.is_none());
+                    match &variants[0].fields[0].type_ann.kind {
+                        TypeExprKind::Named { name, .. } => assert_eq!(name, "number"),
+                        other => panic!("expected Named type, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Union, got {other:?}"),
+            }
+        }
+        other => panic!("expected TypeDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn newtype_with_named_field_parses() {
+    let item = first_item("type UserId = UserId(value: number)");
+    match item {
+        ItemKind::TypeDecl(decl) => {
+            assert_eq!(decl.name, "UserId");
+            match &decl.def {
+                TypeDef::Union(variants) => {
+                    assert_eq!(variants.len(), 1);
+                    assert_eq!(variants[0].fields[0].name.as_deref(), Some("value"));
+                }
+                other => panic!("expected Union, got {other:?}"),
+            }
+        }
+        other => panic!("expected TypeDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn type_alias_still_parses_as_alias() {
+    let item = first_item("type Name = string");
+    match item {
+        ItemKind::TypeDecl(decl) => {
+            assert_eq!(decl.name, "Name");
+            assert!(matches!(&decl.def, TypeDef::Alias(_)));
+        }
+        other => panic!("expected TypeDecl, got {other:?}"),
     }
 }

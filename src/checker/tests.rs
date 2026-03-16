@@ -2431,6 +2431,81 @@ type C = {
     );
 }
 
+// ── Cross-file spread resolution ────────────────────────────
+
+#[test]
+fn cross_file_spread_resolved_via_imports() {
+    // Simulate importing a type whose spread was flattened by the resolver.
+    // Product originally had `...WithRating`, but the resolver should have
+    // flattened it to `{ rating: number, title: string }`.
+    use crate::lexer::span::Span;
+    use crate::parser::ast::*;
+    use crate::resolve::ResolvedImports;
+
+    let dummy_span = Span::new(0, 0, 1, 1);
+
+    // Build a pre-flattened Product type (as the resolver would produce)
+    let product_decl = TypeDecl {
+        name: "Product".to_string(),
+        def: TypeDef::Record(vec![
+            RecordEntry::Field(Box::new(RecordField {
+                name: "rating".to_string(),
+                type_ann: TypeExpr {
+                    kind: TypeExprKind::Named {
+                        name: "number".to_string(),
+                        type_args: vec![],
+                        bounds: vec![],
+                    },
+                    span: dummy_span,
+                },
+                default: None,
+                span: dummy_span,
+            })),
+            RecordEntry::Field(Box::new(RecordField {
+                name: "title".to_string(),
+                type_ann: TypeExpr {
+                    kind: TypeExprKind::Named {
+                        name: "string".to_string(),
+                        type_args: vec![],
+                        bounds: vec![],
+                    },
+                    span: dummy_span,
+                },
+                default: None,
+                span: dummy_span,
+            })),
+        ]),
+        exported: true,
+        opaque: false,
+        type_params: vec![],
+        deriving: vec![],
+    };
+
+    let mut imports = std::collections::HashMap::new();
+    imports.insert(
+        "./types".to_string(),
+        ResolvedImports {
+            type_decls: vec![product_decl],
+            ..ResolvedImports::default()
+        },
+    );
+
+    let source = r#"
+import { Product } from "./types"
+
+const p = Product(rating: 5, title: "Widget")
+"#;
+    let program = Parser::new(source)
+        .parse_program()
+        .expect("parse should succeed");
+    let diags = Checker::with_imports(imports).check(&program);
+    assert!(
+        !diags.iter().any(|d| d.severity == Severity::Error),
+        "expected no errors for cross-file spread import, got: {:?}",
+        diags
+    );
+}
+
 // ── Collect Block ───────────────────────────────────────────
 
 #[test]
@@ -2556,6 +2631,197 @@ type Point = {
     assert!(
         has_error_containing(&diags, "cannot be derived"),
         "deriving unknown trait should error: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── Single-variant union newtypes ───────────────────────────
+
+#[test]
+fn newtype_with_number() {
+    let diags = check("type ProductId = ProductId(number)");
+    assert!(
+        !has_error_containing(&diags, "is not defined"),
+        "ProductId(number) should parse as a newtype, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn newtype_with_string() {
+    let diags = check("type Email = Email(string)");
+    assert!(
+        !has_error_containing(&diags, "is not defined"),
+        "Email(string) should parse as a newtype, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn newtype_with_boolean() {
+    let diags = check("type Flag = Flag(boolean)");
+    assert!(
+        !has_error_containing(&diags, "is not defined"),
+        "Flag(boolean) should parse as a newtype, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn newtype_with_named_field() {
+    let diags = check("type UserId = UserId(value: number)");
+    assert!(
+        !has_error_containing(&diags, "is not defined"),
+        "UserId(value: number) should parse as a newtype, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn newtype_coexists_with_regular_unions() {
+    let diags = check(
+        r#"
+type ProductId = ProductId(number)
+type Route =
+  | Home
+  | Profile(id: string)
+  | NotFound
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.severity != Severity::Error),
+        "newtypes and regular unions should coexist, got errors: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn type_alias_still_works() {
+    let diags = check("type Name = string");
+    assert!(
+        diags.iter().all(|d| d.severity != Severity::Error),
+        "type aliases should still work, got errors: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── Default parameter values ────────────────────────────────
+
+#[test]
+fn default_params_all_defaults_omitted() {
+    let diags = check(
+        r#"
+fn greet(name: string, greeting: string = "Hello") -> string {
+    `${greeting}, ${name}!`
+}
+const x = greet("Ryan")
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.severity != Severity::Error),
+        "calling with defaults omitted should work, got errors: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn default_params_some_defaults_omitted() {
+    let diags = check(
+        r#"
+fn make(a: string, b: string = "x", c: number = 0) -> string {
+    `${a}${b}`
+}
+const x = make("hello", "world")
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.severity != Severity::Error),
+        "calling with some defaults omitted should work, got errors: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn default_params_all_explicit() {
+    let diags = check(
+        r#"
+fn make(a: string, b: string = "x", c: number = 0) -> string {
+    `${a}${b}`
+}
+const x = make("hello", "world", 42)
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.severity != Severity::Error),
+        "calling with all args explicit should work, got errors: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn default_params_too_few_args_error() {
+    let diags = check(
+        r#"
+fn make(a: string, b: string = "x", c: number = 0) -> string {
+    `${a}${b}`
+}
+const x = make()
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "expects"),
+        "missing required param should error, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn default_params_too_many_args_error() {
+    let diags = check(
+        r#"
+fn make(a: string, b: string = "x") -> string {
+    `${a}${b}`
+}
+const x = make("a", "b", "c")
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "expects"),
+        "too many args should error, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn default_params_type_mismatch_error() {
+    let diags = check(
+        r#"
+fn greet(name: string, count: number = "oops") -> string {
+    name
+}
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "default value for `count`"),
+        "default value type mismatch should error, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn default_params_only_required_param() {
+    let diags = check(
+        r#"
+fn greet(name: string, greeting: string = "Hello") -> string {
+    `${greeting}, ${name}!`
+}
+const x = greet("Ryan")
+"#,
+    );
+    // Verify the error message format says "1 to 2 arguments" not just "2 arguments"
+    assert!(
+        !has_error_containing(&diags, "expects"),
+        "should not produce argument count error, got: {:?}",
         diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
