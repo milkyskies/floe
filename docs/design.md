@@ -90,6 +90,7 @@ All four of TypeScript's `?` uses (`?.`, `??`, `?:`, `? :`) are removed. `?` now
 | Immutable maps | `Map.set`, `Map.remove` return new maps | `new Map([...old, [k, v]])` |
 | Immutable sets | `Set.add`, `Set.remove` return new sets | `new Set([...old, val])` |
 | Strict parse | `Number.parse("123")` returns `Result` | no silent `NaN` or partial parse |
+| Http module | `Http.get(url)`, `Http.post(url, body)` | async IIFE wrapping `fetch` in `Result` |
 | Number separators | `1_000_000`, `3.141_592`, `0xFF_FF` | underscores stripped in output |
 
 ### What's Removed (compile errors)
@@ -854,40 +855,32 @@ type User = {
   id: string,
   name: string,
   email: string,
-} deriving (Eq, Display)
+} deriving (Display)
 ```
 
 This generates the same code as a handwritten `for` block with no runtime cost.
+
+**Note:** `Eq` is not derivable — structural equality is built-in for all types via `==` (emits `__zenEq` deep comparison). Writing `deriving (Eq)` is a compile error.
 
 **Derivable traits:**
 
 | Trait | Generated implementation |
 |---|---|
-| `Eq` | Field-by-field `===` comparison: `fn eq(self, other: T) -> boolean` |
 | `Display` | String representation: `fn display(self) -> string` producing `TypeName(field1: val1, field2: val2)` |
-
-**Codegen output** for `deriving (Eq)` on `type User = { id: string, name: string }`:
-
-```typescript
-function eq(self: User, other: User): boolean {
-  return self.id === other.id && self.name === other.name;
-}
-```
 
 **Codegen output** for `deriving (Display)`:
 
 ```typescript
 function display(self: User): string {
-  return `User(id: ${self.id}, name: ${self.name})`;
+  return `User(id: ${self.id}, name: ${self.name}, email: ${self.email})`;
 }
 ```
 
 Deriving rules:
 
 1. `deriving` only works on record types — compile error on unions, aliases, or string literal unions
-2. You can derive multiple traits: `deriving (Eq, Display)`
-3. A handwritten `for` block overrides a derived implementation
-4. Only `Eq` and `Display` are derivable — attempting to derive anything else is a compile error
+2. A handwritten `for` block overrides a derived implementation
+3. Only `Display` is derivable — attempting to derive anything else (including `Eq`) is a compile error
 
 ### Inline Test Blocks
 

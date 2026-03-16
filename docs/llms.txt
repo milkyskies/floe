@@ -313,6 +313,11 @@ const port = Map.get(config, "port")     // Option<string>
 const keys = config |> Map.keys          // Array<string>
 const merged = Map.merge(defaults, config)
 
+// Http — pipe-friendly fetch with Result (no try needed)
+const data = await Http.get("https://api.example.com/users")? |> Http.json?
+const result = await Http.post(url, { name: "Alice" })?
+const body = await Http.get(url)? |> Http.text?
+
 // Set<T> — immutable unique collections
 const tags = Set.fromArray(["urgent", "bug", "frontend"])
 const updated = tags |> Set.add("backend")
@@ -404,12 +409,12 @@ for User: Display {
     }
 }
 
-// Auto-derive traits for record types
+// Auto-derive traits for record types (only Display — Eq is built-in via ==)
 type Point = {
     x: number,
     y: number,
-} deriving (Eq, Display)
-// Generates eq(self, other: Point) -> boolean and display(self) -> string
+} deriving (Display)
+// Generates display(self) -> string
 ```
 
 ## JSX / React Components
