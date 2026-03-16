@@ -4,6 +4,8 @@ A strict, functional language that compiles to TypeScript. Works with any TypeSc
 
 > **Status:** Early development. The compiler is functional but the language is not yet stable.
 
+See the [docs](https://milkyskies.github.io/floe) for reference and to get started.
+
 ## Quick Start
 
 ### Prerequisites
