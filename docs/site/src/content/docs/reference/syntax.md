@@ -122,6 +122,7 @@ expr?                                         // unwrap
 value |> transform
 value |> f(other_arg, _)   // placeholder
 a |> b |> c                // chaining
+value |> match { ... }     // pipe into match
 ```
 
 ### Match
@@ -130,6 +131,12 @@ a |> b |> c                // chaining
 match expr {
   pattern -> body,
   pattern when guard -> body,
+  _ -> default,
+}
+
+// Pipe into match
+expr |> match {
+  pattern -> body,
   _ -> default,
 }
 ```
