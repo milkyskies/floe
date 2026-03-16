@@ -812,6 +812,98 @@ fn stdlib_pipe_tap_with_lambda() {
     assert!(result.contains("return _v"), "output: {result}");
 }
 
+// ── Http Stdlib ─────────────────────────────────────────────
+
+#[test]
+fn stdlib_http_get() {
+    let result = emit(r#"Http.get("https://api.example.com")"#);
+    assert!(
+        result.contains("fetch(\"https://api.example.com\")"),
+        "expected fetch call, got: {result}"
+    );
+    assert!(
+        result.contains("async"),
+        "expected async IIFE, got: {result}"
+    );
+    assert!(
+        result.contains("ok: true as const"),
+        "expected Result ok branch, got: {result}"
+    );
+    assert!(
+        result.contains("ok: false as const"),
+        "expected Result err branch, got: {result}"
+    );
+}
+
+#[test]
+fn stdlib_http_post() {
+    let result = emit(r#"Http.post("https://api.example.com", data)"#);
+    assert!(
+        result.contains("\"POST\""),
+        "expected POST method, got: {result}"
+    );
+    assert!(
+        result.contains("JSON.stringify(data)"),
+        "expected JSON.stringify body, got: {result}"
+    );
+    assert!(
+        result.contains("Content-Type"),
+        "expected Content-Type header, got: {result}"
+    );
+}
+
+#[test]
+fn stdlib_http_put() {
+    let result = emit(r#"Http.put("https://api.example.com", data)"#);
+    assert!(
+        result.contains("\"PUT\""),
+        "expected PUT method, got: {result}"
+    );
+    assert!(
+        result.contains("JSON.stringify(data)"),
+        "expected JSON.stringify body, got: {result}"
+    );
+}
+
+#[test]
+fn stdlib_http_delete() {
+    let result = emit(r#"Http.delete("https://api.example.com")"#);
+    assert!(
+        result.contains("\"DELETE\""),
+        "expected DELETE method, got: {result}"
+    );
+    assert!(
+        result.contains("fetch(\"https://api.example.com\""),
+        "expected fetch call, got: {result}"
+    );
+}
+
+#[test]
+fn stdlib_http_json() {
+    let result = emit("Http.json(response)");
+    assert!(
+        result.contains("response.json()"),
+        "expected .json() call, got: {result}"
+    );
+    assert!(
+        result.contains("async"),
+        "expected async IIFE, got: {result}"
+    );
+}
+
+#[test]
+fn stdlib_http_text() {
+    let result = emit("Http.text(response)");
+    assert!(
+        result.contains("response.text()"),
+        "expected .text() call, got: {result}"
+    );
+    assert!(
+        result.contains("async"),
+        "expected async IIFE, got: {result}"
+    );
+}
+
 // ── Test Blocks ─────────────────────────────────────────────
 
 fn emit_test_mode(input: &str) -> String {

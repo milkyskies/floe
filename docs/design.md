@@ -90,6 +90,7 @@ All four of TypeScript's `?` uses (`?.`, `??`, `?:`, `? :`) are removed. `?` now
 | Immutable maps | `Map.set`, `Map.remove` return new maps | `new Map([...old, [k, v]])` |
 | Immutable sets | `Set.add`, `Set.remove` return new sets | `new Set([...old, val])` |
 | Strict parse | `Number.parse("123")` returns `Result` | no silent `NaN` or partial parse |
+| Http module | `Http.get(url)`, `Http.post(url, body)` | async IIFE wrapping `fetch` in `Result` |
 | Number separators | `1_000_000`, `3.141_592`, `0xFF_FF` | underscores stripped in output |
 
 ### What's Removed (compile errors)
