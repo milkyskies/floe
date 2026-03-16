@@ -231,6 +231,13 @@ fn build_stdlib() -> Vec<StdlibFn> {
         stdlib_fn!("Set", "union", [set_of(t.clone()), set_of(t.clone())], set_of(t.clone()), "new Set([...$0, ...$1])"),
         stdlib_fn!("Set", "intersect", [set_of(t.clone()), set_of(t.clone())], set_of(t.clone()), "new Set([...$0].filter(x => $1.has(x)))"),
         stdlib_fn!("Set", "diff", [set_of(t.clone()), set_of(t.clone())], set_of(t.clone()), "new Set([...$0].filter(x => !$1.has(x)))"),
+        // ── Http ──────────────────────────────────────────────────
+        stdlib_fn!("Http", "get", [Type::String], result_of(Type::Named("Response".to_string()), Type::Named("Error".to_string())), "(async () => { try { const _r = await fetch($0); return { ok: true as const, value: _r }; } catch (_e) { return { ok: false as const, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()"),
+        stdlib_fn!("Http", "post", [Type::String, Type::Unknown], result_of(Type::Named("Response".to_string()), Type::Named("Error".to_string())), "(async () => { try { const _r = await fetch($0, { method: \"POST\", body: JSON.stringify($1), headers: { \"Content-Type\": \"application/json\" } }); return { ok: true as const, value: _r }; } catch (_e) { return { ok: false as const, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()"),
+        stdlib_fn!("Http", "put", [Type::String, Type::Unknown], result_of(Type::Named("Response".to_string()), Type::Named("Error".to_string())), "(async () => { try { const _r = await fetch($0, { method: \"PUT\", body: JSON.stringify($1), headers: { \"Content-Type\": \"application/json\" } }); return { ok: true as const, value: _r }; } catch (_e) { return { ok: false as const, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()"),
+        stdlib_fn!("Http", "delete", [Type::String], result_of(Type::Named("Response".to_string()), Type::Named("Error".to_string())), "(async () => { try { const _r = await fetch($0, { method: \"DELETE\" }); return { ok: true as const, value: _r }; } catch (_e) { return { ok: false as const, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()"),
+        stdlib_fn!("Http", "json", [Type::Named("Response".to_string())], result_of(Type::Unknown, Type::Named("Error".to_string())), "(async () => { try { const _r = await $0.json(); return { ok: true as const, value: _r }; } catch (_e) { return { ok: false as const, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()"),
+        stdlib_fn!("Http", "text", [Type::Named("Response".to_string())], result_of(Type::String, Type::Named("Error".to_string())), "(async () => { try { const _r = await $0.text(); return { ok: true as const, value: _r }; } catch (_e) { return { ok: false as const, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()"),
         // ── Pipe Utilities ────────────────────────────────────────
         stdlib_fn!("Pipe", "tap", [t.clone(), fun(vec![t.clone()], Type::Unit)], t.clone(), "(() => { const _v = $0; ($1)(_v); return _v; })()"),
         // ── JSON ───────────────────────────────────────────────
@@ -477,6 +484,51 @@ mod tests {
     }
 
     #[test]
+    fn lookup_http_get() {
+        let reg = StdlibRegistry::new();
+        let f = reg.lookup("Http", "get").unwrap();
+        assert!(f.codegen.contains("fetch($0)"));
+        assert!(f.codegen.contains("async"));
+    }
+
+    #[test]
+    fn lookup_http_post() {
+        let reg = StdlibRegistry::new();
+        let f = reg.lookup("Http", "post").unwrap();
+        assert!(f.codegen.contains("POST"));
+        assert!(f.codegen.contains("JSON.stringify($1)"));
+    }
+
+    #[test]
+    fn lookup_http_put() {
+        let reg = StdlibRegistry::new();
+        let f = reg.lookup("Http", "put").unwrap();
+        assert!(f.codegen.contains("PUT"));
+        assert!(f.codegen.contains("JSON.stringify($1)"));
+    }
+
+    #[test]
+    fn lookup_http_delete() {
+        let reg = StdlibRegistry::new();
+        let f = reg.lookup("Http", "delete").unwrap();
+        assert!(f.codegen.contains("DELETE"));
+    }
+
+    #[test]
+    fn lookup_http_json() {
+        let reg = StdlibRegistry::new();
+        let f = reg.lookup("Http", "json").unwrap();
+        assert!(f.codegen.contains("$0.json()"));
+    }
+
+    #[test]
+    fn lookup_http_text() {
+        let reg = StdlibRegistry::new();
+        let f = reg.lookup("Http", "text").unwrap();
+        assert!(f.codegen.contains("$0.text()"));
+    }
+
+    #[test]
     fn lookup_nonexistent() {
         let reg = StdlibRegistry::new();
         assert!(reg.lookup("Array", "nonexistent").is_none());
@@ -497,6 +549,7 @@ mod tests {
         assert!(reg.is_module("Pipe"));
         assert!(reg.is_module("Map"));
         assert!(reg.is_module("Set"));
+        assert!(reg.is_module("Http"));
         assert!(!reg.is_module("Foo"));
     }
 
@@ -513,6 +566,7 @@ mod tests {
         assert!(reg.module_functions("JSON").len() >= 2);
         assert!(reg.module_functions("Map").len() >= 12);
         assert!(reg.module_functions("Set").len() >= 11);
+        assert!(reg.module_functions("Http").len() >= 6);
     }
 
     #[test]

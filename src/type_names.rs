@@ -20,3 +20,4 @@ pub const MOD_OPTION: &str = "Option";
 pub const MOD_RESULT: &str = "Result";
 pub const MOD_MAP: &str = "Map";
 pub const MOD_SET: &str = "Set";
+pub const MOD_HTTP: &str = "Http";
