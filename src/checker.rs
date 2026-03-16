@@ -496,6 +496,13 @@ impl Checker {
                     self.env.define(vname, union_type.clone());
                 }
             }
+            TypeDef::StringLiteralUnion(variants) => {
+                let ty = Type::StringLiteralUnion {
+                    name: decl.name.clone(),
+                    variants: variants.clone(),
+                };
+                self.env.define(&decl.name, ty);
+            }
             TypeDef::Alias(type_expr) => {
                 let ty = self.resolve_type(type_expr);
                 self.env.define(&decl.name, ty);
@@ -518,6 +525,9 @@ impl Checker {
                         self.resolve_type(&field.type_ann);
                     }
                 }
+            }
+            TypeDef::StringLiteralUnion(_) => {
+                // No type annotations to validate
             }
             TypeDef::Alias(type_expr) => {
                 self.resolve_type(type_expr);

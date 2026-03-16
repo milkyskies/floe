@@ -137,6 +137,8 @@ pub enum TypeDef {
     Union(Vec<Variant>),
     /// Type alias: `type X = SomeOtherType`
     Alias(TypeExpr),
+    /// String literal union: `"GET" | "POST" | "PUT" | "DELETE"`
+    StringLiteralUnion(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
