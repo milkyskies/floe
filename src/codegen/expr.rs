@@ -1083,7 +1083,7 @@ impl Codegen {
     /// Find the inner expression of the outermost `?` in an expression.
     /// For example, in `input.name |> validateName?`, the parser produces
     /// `Unwrap(Pipe { ... })`, and this returns the `Pipe` expression.
-    fn find_unwrap_in_expr(expr: &Expr) -> Option<&Expr> {
+    pub fn find_unwrap_in_expr(expr: &Expr) -> Option<&Expr> {
         match &expr.kind {
             ExprKind::Unwrap(inner) => Some(inner),
             _ => None,

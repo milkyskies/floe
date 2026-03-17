@@ -29,6 +29,7 @@ pub struct Codegen {
     indent: usize,
     has_jsx: bool,
     needs_deep_equal: bool,
+    unwrap_counter: usize,
     stdlib: StdlibRegistry,
     /// Names that are zero-arg union variants (e.g. "All", "Empty")
     unit_variants: HashSet<String>,
@@ -54,6 +55,7 @@ impl Codegen {
             indent: 0,
             has_jsx: false,
             needs_deep_equal: false,
+            unwrap_counter: 0,
             stdlib: StdlibRegistry::new(),
             unit_variants: HashSet::new(),
             variant_info: HashMap::new(),
@@ -207,6 +209,36 @@ impl Codegen {
         }
     }
 
+    /// Check if an expression contains `?` (Unwrap) at any level,
+    /// and return true if the const should use Result unwrapping.
+    fn expr_has_unwrap(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Unwrap(_) => true,
+            ExprKind::Await(inner) => Self::expr_has_unwrap(inner),
+            ExprKind::Pipe { right, .. } => Self::expr_has_unwrap(right),
+            _ => false,
+        }
+    }
+
+    /// Strip all Unwrap nodes from an expression, leaving the inner expression.
+    fn strip_unwraps(expr: &Expr) -> Expr {
+        match &expr.kind {
+            ExprKind::Unwrap(inner) => Self::strip_unwraps(inner),
+            ExprKind::Await(inner) => Expr {
+                kind: ExprKind::Await(Box::new(Self::strip_unwraps(inner))),
+                span: expr.span,
+            },
+            ExprKind::Pipe { left, right } => Expr {
+                kind: ExprKind::Pipe {
+                    left: Box::new(Self::strip_unwraps(left)),
+                    right: Box::new(Self::strip_unwraps(right)),
+                },
+                span: expr.span,
+            },
+            _ => expr.clone(),
+        }
+    }
+
     // ── Items ────────────────────────────────────────────────────
 
     fn emit_item(&mut self, item: &Item) {
@@ -322,6 +354,47 @@ impl Codegen {
     // ── Const ────────────────────────────────────────────────────
 
     fn emit_const(&mut self, decl: &ConstDecl) {
+        // Handle `const x = expr?` → Result unwrap with early return
+        if Self::expr_has_unwrap(&decl.value) {
+            let stripped = Self::strip_unwraps(&decl.value);
+            let temp = format!("_r{}", self.unwrap_counter);
+            self.unwrap_counter += 1;
+
+            // const _rN = <inner expression without ?>;
+            self.emit_indent();
+            self.push(&format!("const {temp} = "));
+            self.emit_expr(&stripped);
+            self.push(";");
+            self.newline();
+
+            // if (!_rN.ok) return _rN;
+            self.emit_indent();
+            self.push(&format!("if (!{temp}.ok) return {temp};"));
+            self.newline();
+
+            // const <binding> = _rN.value;
+            self.emit_indent();
+            if decl.exported {
+                self.push("export ");
+            }
+            self.push("const ");
+            match &decl.binding {
+                ConstBinding::Name(name) => self.push(name),
+                ConstBinding::Array(names) | ConstBinding::Tuple(names) => {
+                    self.push("[");
+                    self.push(&names.join(", "));
+                    self.push("]");
+                }
+                ConstBinding::Object(names) => {
+                    self.push("{ ");
+                    self.push(&names.join(", "));
+                    self.push(" }");
+                }
+            }
+            self.push(&format!(" = {temp}.value;"));
+            return;
+        }
+
         self.emit_indent();
         if decl.exported {
             self.push("export ");
@@ -870,6 +943,7 @@ impl Codegen {
             indent: 0,
             has_jsx: false,
             needs_deep_equal: false,
+            unwrap_counter: 0,
             stdlib: StdlibRegistry::new(),
             unit_variants: self.unit_variants.clone(),
             variant_info: self.variant_info.clone(),
