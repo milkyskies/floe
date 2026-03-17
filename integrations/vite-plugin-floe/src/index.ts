@@ -65,18 +65,13 @@ interface CompileResult {
 
 function compileFloe(
   compiler: string,
-  source: string,
+  _source: string,
   filename: string,
 ): CompileResult {
   try {
-    const output = execFileSync(compiler, ["build", "--emit-stdout", "-"], {
-      input: source,
+    const output = execFileSync(compiler, ["build", "--emit-stdout", filename], {
       encoding: "utf-8",
       timeout: 30_000,
-      env: {
-        ...process.env,
-        FLOE_FILENAME: filename,
-      },
     });
 
     return {
