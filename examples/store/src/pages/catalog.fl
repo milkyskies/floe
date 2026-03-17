@@ -123,7 +123,7 @@ fn FilterSidebar(props: {
                     <button
                         key={cat.slug}
                         onClick={|| props.onCategoryChange(cat.slug)}
-                        className={props.selectedCategory == cat.slug |> match {
+                        className={(props.selectedCategory == cat.slug) |> match {
                             true -> "block w-full rounded px-3 py-1.5 text-left text-sm bg-indigo-600/20 text-indigo-300",
                             false -> "block w-full rounded px-3 py-1.5 text-left text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200",
                         }}
