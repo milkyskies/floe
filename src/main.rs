@@ -76,8 +76,10 @@ fn main() -> Result<()> {
             out_dir,
             emit_stdout,
         } => {
-            if emit_stdout || path.as_os_str() == "-" {
+            if path.as_os_str() == "-" {
                 cmd_build_stdin()
+            } else if emit_stdout {
+                cmd_build_file_stdout(&path)
             } else {
                 cmd_build(&path, out_dir.as_deref())
             }
@@ -129,13 +131,15 @@ fn compile_source(file_path: &Path, filename: &str, source: &str) -> Result<Comp
         Checker::with_all_imports(resolved.clone(), dts_map)
     };
     let (check_diags, expr_types) = checker.check_full(&program);
+    // Print diagnostics to stderr but don't block compilation
+    // (floe check handles strict error reporting separately)
     let type_errors: Vec<_> = check_diags
         .iter()
         .filter(|d| d.severity == diagnostic::Severity::Error)
         .collect();
     if !type_errors.is_empty() {
         let rendered = diagnostic::render_diagnostics(filename, source, &check_diags);
-        return Err(anyhow::anyhow!("{rendered}"));
+        eprintln!("{rendered}");
     }
 
     Ok(CompileResult {
@@ -143,6 +147,21 @@ fn compile_source(file_path: &Path, filename: &str, source: &str) -> Result<Comp
         resolved,
         expr_types,
     })
+}
+
+// ── Build (file -> stdout) ────────────────────────────────────────
+
+fn cmd_build_file_stdout(path: &Path) -> Result<()> {
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let filename = path.display().to_string();
+
+    let result = compile_source(path, &filename, &source)?;
+    let output =
+        Codegen::with_imports(result.expr_types, &result.resolved).generate(&result.program);
+    print!("{}", output.code);
+
+    Ok(())
 }
 
 // ── Build (stdin -> stdout) ───────────────────────────────────────

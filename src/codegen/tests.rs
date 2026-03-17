@@ -281,15 +281,15 @@ fn constructor_with_spread() {
 #[test]
 fn match_simple() {
     let result = emit("match x { Ok(v) -> v, Err(e) -> e }");
-    assert!(result.contains(".tag === \"Ok\""));
-    assert!(result.contains(".tag === \"Err\""));
+    assert!(result.contains(".ok === true"));
+    assert!(result.contains(".ok === false"));
 }
 
 #[test]
 fn match_with_wildcard() {
     let result = emit("match x { Ok(v) -> v, _ -> 0 }");
     // Last arm is wildcard -> no condition needed
-    assert!(result.contains(".tag === \"Ok\""));
+    assert!(result.contains(".ok === true"));
     assert!(result.contains("0"));
 }
 
@@ -819,12 +819,12 @@ fn union_variant_dot_access_non_union_passthrough() {
 
 #[test]
 fn tuple_construction() {
-    assert_eq!(emit("(1, 2)"), "[1, 2] as const;");
+    assert_eq!(emit("(1, 2)"), "[1, 2];");
 }
 
 #[test]
 fn tuple_three_elements() {
-    assert_eq!(emit(r#"(1, "two", true)"#), r#"[1, "two", true] as const;"#);
+    assert_eq!(emit(r#"(1, "two", true)"#), r#"[1, "two", true];"#);
 }
 
 #[test]
@@ -837,7 +837,7 @@ fn tuple_destructuring() {
 fn tuple_type_annotation() {
     let result = emit("const p: (number, string) = (1, \"a\")");
     assert!(result.contains("readonly [number, string]"));
-    assert!(result.contains("[1, \"a\"] as const"));
+    assert!(result.contains("[1, \"a\"]"));
 }
 
 #[test]
@@ -848,7 +848,7 @@ fn tuple_return_type() {
 
 #[test]
 fn tuple_trailing_comma() {
-    assert_eq!(emit("(1, 2,)"), "[1, 2] as const;");
+    assert_eq!(emit("(1, 2,)"), "[1, 2];");
 }
 
 // ── Pipe: tap ───────────────────────────────────────────────

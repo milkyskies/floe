@@ -131,7 +131,7 @@ fn build_stdlib() -> Vec<StdlibFn> {
         stdlib_fn!("Array", "take", [array_of(t.clone()), Type::Number], array_of(t.clone()), "$0.slice(0, $1)"),
         stdlib_fn!("Array", "drop", [array_of(t.clone()), Type::Number], array_of(t.clone()), "$0.slice($1)"),
         stdlib_fn!("Array", "reverse", [array_of(t.clone())], array_of(t.clone()), "[...$0].reverse()"),
-        stdlib_fn!("Array", "reduce", [array_of(t.clone()), u.clone(), fun(vec![u.clone(), t.clone()], u.clone())], u.clone(), "$0.reduce($2, $1)"),
+        stdlib_fn!("Array", "reduce", [array_of(t.clone()), fun(vec![u.clone(), t.clone()], u.clone()), u.clone()], u.clone(), "$0.reduce($1, $2)"),
         stdlib_fn!("Array", "length", [array_of(t.clone())], Type::Number, "$0.length"),
         stdlib_fn!("Array", "concat", [array_of(t.clone()), array_of(t.clone())], array_of(t.clone()), "[...$0, ...$1]"),
         stdlib_fn!("Array", "append", [array_of(t.clone()), t.clone()], array_of(t.clone()), "[...$0, $1]"),

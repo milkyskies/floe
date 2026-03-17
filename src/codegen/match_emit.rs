@@ -120,19 +120,40 @@ impl Codegen {
                 self.push(")");
             }
             PatternKind::Variant { name, fields } => {
-                // Check tag
-                self.emit_expr(subject);
-                self.push(&format!(".{TAG_FIELD} === \"{}\"", name));
+                // Result types use { ok: true/false } instead of { tag: "Ok"/"Err" }
+                if name == "Ok" {
+                    self.emit_expr(subject);
+                    self.push(".ok === true");
+                } else if name == "Err" {
+                    self.emit_expr(subject);
+                    self.push(".ok === false");
+                } else {
+                    // Regular union variants use tag field
+                    self.emit_expr(subject);
+                    self.push(&format!(".{TAG_FIELD} === \"{}\"", name));
+                }
 
                 // Nested conditions for sub-patterns
+                let field_names = self
+                    .variant_info
+                    .get(name.as_str())
+                    .map(|(_, names)| names.clone());
                 for (i, field_pat) in fields.iter().enumerate() {
                     if !matches!(
                         field_pat.kind,
                         PatternKind::Wildcard | PatternKind::Binding(_)
                     ) {
                         self.push(" && ");
-                        // Access the field — for single-field variants use .value
-                        let field_access = if fields.len() == 1 {
+                        // Access the field using variant_info field names when available
+                        let field_access = if name == "Ok" && fields.len() == 1 {
+                            format!("{}.{VALUE_FIELD}", self.expr_to_string(subject))
+                        } else if name == "Err" && fields.len() == 1 {
+                            format!("{}.error", self.expr_to_string(subject))
+                        } else if let Some(ref names) = field_names
+                            && let Some(fname) = names.get(i)
+                        {
+                            format!("{}.{}", self.expr_to_string(subject), fname)
+                        } else if fields.len() == 1 {
                             format!("{}.{VALUE_FIELD}", self.expr_to_string(subject))
                         } else {
                             format!("{}._{i}", self.expr_to_string(subject))
@@ -370,7 +391,12 @@ fn collect_bindings_inner(
             // Look up field names from variant definition
             let field_names = variant_info.get(name.as_str()).map(|(_, names)| names);
             for (i, field_pat) in fields.iter().enumerate() {
-                let field_access = if let Some(names) = field_names
+                // Result types: Ok(v) -> .value, Err(e) -> .error
+                let field_access = if name == "Ok" && fields.len() == 1 {
+                    format!("{}.{VALUE_FIELD}", expr_to_str(subject))
+                } else if name == "Err" && fields.len() == 1 {
+                    format!("{}.error", expr_to_str(subject))
+                } else if let Some(names) = field_names
                     && let Some(fname) = names.get(i)
                 {
                     format!("{}.{}", expr_to_str(subject), fname)

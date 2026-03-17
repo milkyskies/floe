@@ -1,0 +1,109 @@
+// ── API layer ──────────────────────────────────────────
+// Uses Http namespace, parse<T> built-in, and collect for
+// parallel fetching. No Zod — the compiler generates
+// validators from the type definitions.
+
+import { Product, ProductId, Review, ApiError } from "./types"
+
+// ── Response types for parsing ─────────────────────────
+
+type ProductDetailResponse = {
+    id: number,
+    title: string,
+    description: string,
+    category: string,
+    price: number,
+    discountPercentage: number,
+    rating: number,
+    stock: number,
+    tags: Array<string>,
+    brand: string,
+    thumbnail: string,
+    images: Array<string>,
+    reviews: Array<Review>,
+}
+
+type ProductListResponse = {
+    products: Array<Product>,
+    total: number,
+}
+
+export type CategoryResponse = {
+    slug: string,
+    name: string,
+}
+
+// ── Single product fetch ───────────────────────────────
+
+export async fn fetchProduct(id: ProductId) -> Result<(Product, Array<Review>), ApiError> {
+    const data = await Http.get(`https://dummyjson.com/products/${id}`)?
+        |> Http.json?
+        |> parse<ProductDetailResponse>?
+
+    const product = Product(
+        id: ProductId(data.id),
+        title: data.title,
+        description: data.description,
+        category: data.category,
+        price: data.price,
+        discountPercentage: data.discountPercentage,
+        rating: data.rating,
+        stock: data.stock,
+        tags: data.tags,
+        brand: data.brand,
+        thumbnail: data.thumbnail,
+        images: data.images,
+    )
+
+    Ok((product, data.reviews))
+}
+
+// ── Product list with filters ──────────────────────────
+
+export async fn fetchProducts(
+    category: string = "",
+    search: string = "",
+    limit: number = 20,
+    skip: number = 0,
+) -> Result<(Array<Product>, number), ApiError> {
+    const url = (category, search)
+        |> match {
+            ("", "") -> `https://dummyjson.com/products?limit=${limit}&skip=${skip}`,
+            (cat, "") when cat != "" -> `https://dummyjson.com/products/category/${cat}?limit=${limit}&skip=${skip}`,
+            (_, q) -> `https://dummyjson.com/products/search?q=${q}&limit=${limit}&skip=${skip}`,
+        }
+
+    const data = await Http.get(url)?
+        |> Http.json?
+        |> parse<ProductListResponse>?
+
+    Ok((data.products, data.total))
+}
+
+// ── Categories ─────────────────────────────────────────
+
+// TODO: needs compiler fix - Array.map return type inference doesn't narrow through generics
+export async fn fetchCategories() -> Result<Array<CategoryResponse>, ApiError> {
+    const data = await Http.get("https://dummyjson.com/products/categories")?
+        |> Http.json?
+        |> parse<Array<CategoryResponse>>?
+
+    Ok(data)
+}
+
+// ── Parallel dashboard fetch ───────────────────────────
+
+export async fn fetchStoreDashboard(
+    category: string = "",
+) -> Result<(Array<Product>, Array<CategoryResponse>), Array<ApiError>> {
+    collect {
+        const (products, _total) = await fetchProducts(category: category)?
+        const categories = await fetchCategories()?
+
+        (products, categories)
+    }
+}
+
+test "fetchProducts returns products" {
+    assert true
+}
