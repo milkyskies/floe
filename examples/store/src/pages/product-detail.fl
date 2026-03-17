@@ -45,14 +45,9 @@ fn ProductDetailContent(props: {
         queryFn: async || fetchProduct(props.productId),
     })
 
-    // TODO: needs compiler fix - match on Result from trusted imports returns unknown
-    const product: Product = data |> parse<Product> |> match {
+    const (product, reviews) = data |> match {
         Ok(result) -> result,
         Err(_) -> unreachable,
-    }
-    const reviews: Array<Review> = data |> parse<Array<Review>> |> match {
-        Ok(result) -> result,
-        Err(_) -> [],
     }
 
     const hasDiscount = product.discountPercentage > 0

@@ -217,10 +217,9 @@ fn ProductGrid(props: {
         queryFn: async || fetchProducts(category: props.category, search: props.search, limit: 30),
     })
 
-    // TODO: needs compiler fix - match on Result from trusted imports returns unknown
-    const products: Array<Product> = data |> parse<Array<Product>> |> match {
+    const (products, _total) = data |> match {
         Ok(result) -> result,
-        Err(_) -> [],
+        Err(_) -> ([], 0),
     }
 
     const filtered = products
