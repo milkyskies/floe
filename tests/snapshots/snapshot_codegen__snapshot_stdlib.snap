@@ -1,5 +1,6 @@
 ---
 source: tests/snapshot_codegen.rs
+assertion_line: 100
 expression: output
 ---
 function __floeEq(a: unknown, b: unknown): boolean {
@@ -40,7 +41,7 @@ const _dropped = [1, 2, 3, 4, 5].slice(2);
 
 const _reversed = [...[1, 2, 3]].reverse();
 
-const _reduced = [1, 2, 3].reduce((acc, n) => acc + n, 0);
+const _reduced = [1, 2, 3].reduce(0, (acc, n) => acc + n);
 
 const _len = [1, 2, 3].length;
 
