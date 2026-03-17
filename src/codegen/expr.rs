@@ -328,7 +328,7 @@ impl Codegen {
                     }
                     self.emit_expr(elem);
                 }
-                self.push("] as const");
+                self.push("]");
             }
 
             ExprKind::Spread(inner) => {
