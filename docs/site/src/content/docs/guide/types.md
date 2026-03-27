@@ -169,13 +169,13 @@ fn getUsername(id: string) -> Result<string, Error> {
 }
 ```
 
-## Brand Types
+## Newtypes
 
-Compile-time distinct types that erase at runtime:
+Single-variant wrappers that are distinct at compile time but erase at runtime:
 
 ```floe
-type UserId = Brand<string, "UserId">
-type PostId = Brand<string, "PostId">
+type UserId { string }
+type PostId { string }
 
 // userId and postId are both strings at runtime,
 // but can't be mixed up at compile time

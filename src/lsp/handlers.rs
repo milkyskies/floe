@@ -4,13 +4,15 @@ use tower_lsp::LanguageServer;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
+use crate::stdlib::StdlibRegistry;
+
 use super::completion::is_pipe_context;
 use super::completion::resolve_piped_type;
 use super::stdlib_hover;
 use super::symbols::symbol_kind_to_completion;
 use super::{
-    BUILTINS, FloeLsp, KEYWORDS, is_word_char, offset_to_position, offset_to_range,
-    position_to_offset, word_at_offset, word_prefix_at_offset,
+    BUILTINS, FloeLsp, KEYWORDS, is_cursor_on_def_name, is_word_char, offset_to_position,
+    offset_to_range, position_to_offset, word_at_offset, word_prefix_at_offset,
 };
 
 #[tower_lsp::async_trait]
@@ -193,6 +195,12 @@ impl LanguageServer for FloeLsp {
             "|>" => {
                 "```floe\nexpr |> function\n```\nPipe operator: passes left side as first argument to right side."
             }
+            "todo" => {
+                "```floe\ntodo\n```\nPlaceholder for unfinished code. Throws at runtime."
+            }
+            "unreachable" => {
+                "```floe\nunreachable\n```\nAsserts a code path is impossible. Throws at runtime."
+            }
             _ => return Ok(None),
         };
 
@@ -218,6 +226,41 @@ impl LanguageServer for FloeLsp {
 
         let offset = position_to_offset(&doc.content, position);
         let prefix = word_prefix_at_offset(&doc.content, offset);
+
+        // ── Stdlib module method completions (Array., String., etc.) ──
+        if let Some(module_name) = stdlib_module_prefix(&doc.content, offset) {
+            let registry = StdlibRegistry::new();
+            let functions = registry.module_functions(&module_name);
+            if !functions.is_empty() {
+                let items: Vec<CompletionItem> = functions
+                    .into_iter()
+                    .filter(|f| prefix.is_empty() || f.name.starts_with(&*prefix))
+                    .map(|f| {
+                        let params: Vec<String> =
+                            f.params.iter().map(stdlib_hover::format_type).collect();
+                        let ret = stdlib_hover::format_type(&f.return_type);
+                        let detail = format!(
+                            "{}.{}({}) -> {}",
+                            f.module,
+                            f.name,
+                            params.join(", "),
+                            ret
+                        );
+                        CompletionItem {
+                            label: f.name.to_string(),
+                            kind: Some(CompletionItemKind::FUNCTION),
+                            detail: Some(detail),
+                            insert_text: Some(f.name.to_string()),
+                            insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
+                            ..Default::default()
+                        }
+                    })
+                    .collect();
+                if !items.is_empty() {
+                    return Ok(Some(CompletionResponse::Array(items)));
+                }
+            }
+        }
 
         // ── Pipe-aware completions ──────────────────────────────
         if is_pipe_context(&doc.content, offset) {
@@ -383,16 +426,22 @@ impl LanguageServer for FloeLsp {
 
         // Search current document
         for sym in doc.index.find_by_name(word) {
-            // If this symbol is an import, try to resolve to the source file
-            // (even if cursor is on the import itself — that's the point)
-            if let Some(source_spec) = &sym.import_source
-                && let Some(location) = Self::resolve_import_location(&uri, source_spec, word)
-            {
-                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            // If this symbol is an import, resolve to the source file.
+            // Never return the import's own location — that would jump within
+            // the current file instead of going to the definition.
+            if let Some(source_spec) = &sym.import_source {
+                if let Some(location) = Self::resolve_import_location(&uri, source_spec, word) {
+                    return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+                }
+                // Resolution failed — skip this symbol rather than returning
+                // the import declaration's position in the current file.
+                continue;
             }
 
-            // Skip the symbol at the cursor position itself (don't jump to yourself)
-            if offset >= sym.start && offset <= sym.end {
+            // Skip only when the cursor is on the definition name itself
+            // (not anywhere in the item body). Find the name's position within
+            // the declaration to do a precise check.
+            if is_cursor_on_def_name(&doc.content, offset, sym) {
                 continue;
             }
 
@@ -679,6 +728,47 @@ impl LanguageServer for FloeLsp {
 // ── Hover enrichment ─────────────────────────────────────────────
 
 use super::symbols::Symbol;
+
+/// Detect if the cursor is right after `ModuleName.` where ModuleName is a known
+/// stdlib module. Returns the module name if found.
+///
+/// For example, in `Array.m|` (where `|` is cursor), this returns `Some("Array")`.
+/// In `nums |> Array.f|`, this also returns `Some("Array")`.
+fn stdlib_module_prefix(source: &str, offset: usize) -> Option<String> {
+    let bytes = source.as_bytes();
+
+    // Walk backwards past the current word prefix (what the user is typing after the dot)
+    let mut pos = offset;
+    while pos > 0 && (bytes[pos - 1].is_ascii_alphanumeric() || bytes[pos - 1] == b'_') {
+        pos -= 1;
+    }
+
+    // Now we should be at the dot
+    if pos == 0 || bytes[pos - 1] != b'.' {
+        return None;
+    }
+    pos -= 1; // skip the dot
+
+    // Walk backwards to find the module name
+    let end = pos;
+    while pos > 0 && (bytes[pos - 1].is_ascii_alphanumeric() || bytes[pos - 1] == b'_') {
+        pos -= 1;
+    }
+
+    if pos == end {
+        return None; // no name before the dot
+    }
+
+    let candidate = &source[pos..end];
+
+    // Check if it's a known stdlib module
+    let registry = StdlibRegistry::new();
+    if registry.is_module(candidate) {
+        Some(candidate.to_string())
+    } else {
+        None
+    }
+}
 
 /// Enrich a symbol's hover detail with the inferred type from the checker's
 /// type_map when the symbol doesn't already have a type annotation.

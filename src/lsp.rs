@@ -104,6 +104,29 @@ fn is_word_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
+/// Check if the cursor is on the definition name itself (not in the body).
+///
+/// The symbol's start..end covers the entire declaration (e.g. the whole
+/// function including its body). We only want to skip goto-def when the
+/// cursor is literally on the name token at the definition site, not when
+/// it's on a usage of that name inside the declaration body.
+fn is_cursor_on_def_name(source: &str, cursor_offset: usize, sym: &symbols::Symbol) -> bool {
+    // The name must appear somewhere near the start of the declaration.
+    // Search for the first occurrence of the name within the item span.
+    let end = sym.end.min(source.len());
+    if sym.start >= end {
+        return false;
+    }
+    let span_slice = &source[sym.start..end];
+    if let Some(rel_pos) = span_slice.find(&sym.name) {
+        let name_start = sym.start + rel_pos;
+        let name_end = name_start + sym.name.len();
+        cursor_offset >= name_start && cursor_offset < name_end
+    } else {
+        false
+    }
+}
+
 use crate::find_project_dir;
 
 // ── Document State ──────────────────────────────────────────────
@@ -175,12 +198,17 @@ impl FloeLsp {
     /// Parse and type-check a document, update symbol index, publish diagnostics.
     async fn update_document(&self, uri: Url, source: &str) {
         let (diagnostics, index, type_map) = match Parser::new(source).parse_program() {
-            Err(parse_errors) => {
+            Err(_) => {
+                // Full parse failed — use lossy parse to get a partial AST so
+                // we can still build a symbol index for completions/hover.
+                let (program, parse_errors) = Parser::parse_lossy(source);
                 let zs_diags = zs_diag::from_parse_errors(&parse_errors);
+                let index = SymbolIndex::build(&program);
+                let type_map = HashMap::new();
                 (
                     self.convert_diagnostics(source, &zs_diags),
-                    SymbolIndex::default(),
-                    HashMap::new(),
+                    index,
+                    type_map,
                 )
             }
             Ok(program) => {
@@ -362,6 +390,44 @@ impl FloeLsp {
                 } else {
                     unmatched.push(item);
                 }
+            }
+        }
+
+        // Add stdlib functions to pipe completions
+        let stdlib = crate::stdlib::StdlibRegistry::new();
+        for f in stdlib.all_functions() {
+            if !prefix.is_empty() && !f.name.starts_with(prefix) {
+                continue;
+            }
+            let first_param_str =
+                f.params.first().map(stdlib_hover::format_type);
+            let compatible = piped_type
+                .zip(first_param_str.as_deref())
+                .is_some_and(|(pt, fpt)| {
+                    completion::is_pipe_compatible(fpt, pt)
+                });
+
+            let sort_prefix = if compatible { "0" } else { "1" };
+            let label = format!("{}.{}", f.module, f.name);
+            let params: Vec<String> =
+                f.params.iter().map(stdlib_hover::format_type).collect();
+            let ret = stdlib_hover::format_type(&f.return_type);
+            let detail = format!("({}) -> {}", params.join(", "), ret);
+
+            let item = CompletionItem {
+                label: label.clone(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(detail),
+                insert_text: Some(label.clone()),
+                insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
+                sort_text: Some(format!("{sort_prefix}2{label}")),
+                ..Default::default()
+            };
+
+            if compatible {
+                matched.push(item);
+            } else {
+                unmatched.push(item);
             }
         }
 

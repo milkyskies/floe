@@ -68,7 +68,7 @@ This gives you method-call ergonomics without OOP:
 ```floe
 const message = user
   |> greet("Hi")
-  |> String.toUpper
+  |> String.toUpperCase
 ```
 
 ## Generic Types

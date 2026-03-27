@@ -109,9 +109,9 @@ type A { x: number }
 type B { y: string }
 type C { ...A, ...B, z: boolean }
 
-// Branded types
-type UserId = Brand<string, "UserId">
-type Email = Brand<string, "Email">
+// Newtypes (single-variant wrappers)
+type UserId { string }
+type Email { string }
 
 // Opaque types (only defining module can create/read)
 opaque type HashedPassword = string
@@ -292,7 +292,7 @@ match user.nickname {
 
 // Option helpers
 user.nickname |> Option.unwrapOr(user.name)
-user.nickname |> Option.map(fn(n) toUpper(n))
+user.nickname |> Option.map(fn(n) toUpperCase(n))
 
 // collect block — accumulate all errors instead of short-circuiting
 fn validateForm(input: FormInput) -> Result<ValidForm, Array<ValidationError>> {

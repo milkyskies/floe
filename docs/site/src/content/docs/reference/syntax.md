@@ -64,8 +64,8 @@ type HttpMethod = "GET" | "POST" | "PUT" | "DELETE"
 // Alias
 type Name = string
 
-// Brand
-type UserId = Brand<string, "UserId">
+// Newtype
+type UserId { string }
 
 // Opaque
 opaque type Email = string

@@ -106,7 +106,7 @@ Functions for working with `Option<T>` (`Some(v)` / `None`) values.
 ```floe
 // Transform without unwrapping
 const upper = user.nickname
-  |> Option.map(fn(n) String.toUpper(n))
+  |> Option.map(fn(n) String.toUpperCase(n))
 // Some("RYAN") or None
 
 // Chain lookups
@@ -174,8 +174,8 @@ Pipe-friendly string operations.
 | `String.startsWith` | `string, string -> boolean` | Check prefix |
 | `String.endsWith` | `string, string -> boolean` | Check suffix |
 | `String.contains` | `string, string -> boolean` | Check if substring exists |
-| `String.toUpper` | `string -> string` | Convert to uppercase |
-| `String.toLower` | `string -> string` | Convert to lowercase |
+| `String.toUpperCase` | `string -> string` | Convert to uppercase |
+| `String.toLowerCase` | `string -> string` | Convert to lowercase |
 | `String.length` | `string -> number` | Character count |
 | `String.slice` | `string, number, number -> string` | Extract substring |
 | `String.padStart` | `string, number, string -> string` | Pad from the start |
@@ -188,14 +188,14 @@ Pipe-friendly string operations.
 // Pipe-friendly
 const cleaned = "  Hello, World!  "
   |> String.trim
-  |> String.toLower
+  |> String.toLowerCase
   |> String.replace("world", "floe")
 // "hello, floe!"
 
 // Split and process
 const words = "one,two,three"
   |> String.split(",")
-  |> Array.map(fn(w) String.toUpper(w))
+  |> Array.map(fn(w) String.toUpperCase(w))
 // ["ONE", "TWO", "THREE"]
 ```
 
@@ -483,7 +483,7 @@ const processed = data
 const name = "  Alice  "
   |> String.trim
   |> tap(Console.log)         // logs "Alice"
-  |> String.toUpper           // "ALICE"
+  |> String.toUpperCase           // "ALICE"
 ```
 
 `tap` is the pipeline equivalent of a `console.log` that doesn't interrupt the flow. The function you pass receives the value but its return is ignored -- the original value passes through unchanged.

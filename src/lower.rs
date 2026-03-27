@@ -21,6 +21,18 @@ pub fn lower_program(root: &SyntaxNode, source: &str) -> Result<Program, Vec<Par
     }
 }
 
+/// Lower a CST into an AST on a best-effort basis, returning whatever was
+/// successfully parsed along with any errors. Used by the LSP to build a
+/// partial symbol index even when the source contains errors.
+pub fn lower_program_lossy(root: &SyntaxNode, source: &str) -> (Program, Vec<ParseError>) {
+    let mut lowerer = Lowerer {
+        source,
+        errors: Vec::new(),
+    };
+    let program = lowerer.lower_root(root);
+    (program, lowerer.errors)
+}
+
 struct Lowerer<'src> {
     source: &'src str,
     errors: Vec<ParseError>,

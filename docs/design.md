@@ -65,7 +65,7 @@ All four of TypeScript's `?` uses (`?.`, `??`, `?:`, `? :`) are removed. `?` now
 | `todo` | placeholder, type `never` | `(() => { throw new Error("not implemented"); })()` |
 | `unreachable` | assert unreachable, type `never` | `(() => { throw new Error("unreachable"); })()` |
 | `?` operator | `fetchUser(id)?` | early return on Err/None |
-| Branded types | `type UserId = Brand<string, "UserId">` | `string` at runtime |
+| Newtypes | `type UserId { string }` | `string` at runtime (single-variant wrapper) |
 | Opaque types | `opaque type HashedPw = string` | `string`, but only the defining module can create/read |
 | Tagged unions | `type Route { \| Home \| Profile { id: string } }` | discriminated union |
 | String literal unions | `type Method = "GET" \| "POST" \| "PUT"` | `"GET" \| "POST" \| "PUT"` (pass-through for npm interop) |
@@ -323,11 +323,11 @@ fn loadProfile(id: UserId): Result<Profile, AppError> {
 fn getDisplayName(userId: UserId): Option<string> {
   const user     = findUser(userId)?
   const nickname = user.nickname?
-  Some(toUpper(nickname))
+  Some(toUpperCase(nickname))
 }
 
 // In a pipe
-const name = fetchUser(id)? |> getName |> toUpper
+const name = fetchUser(id)? |> getName |> toUpperCase
 
 // Compiler enforces: function must return Result or Option to use ?
 fn greet(): string {
@@ -399,7 +399,7 @@ const display = match user.nickname {
 const display = user.nickname |> Option.unwrapOr(user.name)
 
 // Transform inside without unwrapping
-const upper: Option<string> = user.nickname |> Option.map(fn(n) toUpper(n))
+const upper: Option<string> = user.nickname |> Option.map(fn(n) toUpperCase(n))
 
 // Chain
 const avatar = user.nickname |> Option.flatMap(fn(n) findAvatar(n))
@@ -565,13 +565,13 @@ const err: ApiError = Network(Timeout(3000))
 
 The compiler generates discrimination tags in the emitted TypeScript — you never write `type: "blahblah"` manually. Exhaustiveness checking works at every nesting level.
 
-### Branded Types
+### Newtypes (Single-Variant Wrappers)
 
 ```floe
-type UserId = Brand<string, "UserId">
-type Email  = Brand<string, "Email">
+type UserId { string }
+type Email  { string }
 
-const id: UserId = UserId("abc123")
+const id = UserId("abc123")
 sendEmail(id, "hello")  // COMPILE ERROR: UserId is not Email
 ```
 
@@ -1269,7 +1269,7 @@ enum StringPatternSegment {
 The heart of the compiler:
 
 1. **Type inference** — Hindley-Milner with TypeScript-flavored annotations
-2. **Brand enforcement** — `UserId` and `Email` are distinct at compile time, erased at runtime
+2. **Newtype enforcement** — `UserId` and `Email` are distinct at compile time, erased at runtime
 3. **Opaque enforcement** — only the defining module can construct/destructure opaque types
 4. **Exhaustiveness checking** — every `match` must cover all variants (including ranges)
 5. **Result/Option tracking** — `?` only allowed in functions returning `Result`/`Option`
@@ -1407,7 +1407,7 @@ Emits clean, readable `.tsx`. Zero runtime imports.
 | `Array.unique(arr)` | `[...new Set(arr)]` |
 | `Array.groupBy(arr, fn)` | `Object.groupBy(arr, fn)` |
 | `Number.parse("123")` | strict parse returning `Result` |
-| `Brand<string, "UserId">` | `string` (erased) |
+| `type UserId { string }` | `string` (newtype erased) |
 | `opaque type X = T` | `T` (erased, access controlled at compile time) |
 | `for User { fn display(self) -> string { ... } }` | `function display(self: User): string { ... }` |
 | `trait Display { fn display(self) -> string }` | *(erased — no output)* |
@@ -1439,7 +1439,7 @@ Suggestions:
   Option.flatMap(fn)       Option<string> -> Option<U>
   Option.isSome            Option<string> -> boolean
   Option.isNone            Option<string> -> boolean
-  toUpper                  string -> string  (if unwrapped)
+  toUpperCase              string -> string  (if unwrapped)
   ...
 
 ```
@@ -1559,7 +1559,7 @@ This applies to `fn` bodies, `for`-block functions, match arms with block bodies
 ### Phase 4: Type System (4-8 weeks)
 
 - [ ] Basic type inference
-- [ ] Brand types (compile-time only, erased in output)
+- [ ] Newtypes (compile-time only, erased in output)
 - [ ] Opaque types (module-scoped construction)
 - [ ] Union type exhaustiveness in match
 - [ ] `?` only in Result/Option-returning functions

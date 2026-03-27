@@ -300,6 +300,42 @@ const _x = HashedPassword("abc")
     assert!(has_error_containing(&diags, "opaque type"));
 }
 
+#[test]
+fn opaque_type_alias_allows_underlying_type_in_defining_module() {
+    let diags = check(
+        r#"
+opaque type HashedPassword = string
+
+fn hash(pw: string) -> HashedPassword {
+    pw
+}
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "expected return type"),
+        "opaque alias should accept underlying type in the defining module, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn opaque_type_alias_rejects_wrong_type() {
+    let diags = check(
+        r#"
+opaque type HashedPassword = string
+
+fn hash(pw: number) -> HashedPassword {
+    pw
+}
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "expected return type"),
+        "opaque alias should reject non-underlying type, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
 // ── Unhandled Result ────────────────────────────────────────
 
 #[test]
@@ -2882,4 +2918,82 @@ fn _test() {
         "destructured lambda params should be in scope, got: {:?}",
         diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
+}
+
+// ── Partial application with _ placeholder ──────────────────
+
+#[test]
+fn partial_application_no_error() {
+    let diags = check(
+        r#"
+fn add(a: number, b: number) -> number { a + b }
+const _addTen = add(10, _)
+"#,
+    );
+    assert!(
+        !has_error(&diags, "E001"),
+        "partial application should not produce errors, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn partial_application_returns_function_type() {
+    // `add(10, _)` should have type `fn(number) -> number`
+    // so calling it with a number should be fine
+    let diags = check(
+        r#"
+fn add(a: number, b: number) -> number { a + b }
+const addTen = add(10, _)
+const _result = addTen(5)
+"#,
+    );
+    assert!(
+        !has_error(&diags, "E001"),
+        "calling partial application result should work, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn partial_application_wrong_type_errors() {
+    let diags = check(
+        r#"
+fn add(a: number, b: number) -> number { a + b }
+const _addTen = add("hello", _)
+"#,
+    );
+    assert!(has_error_containing(
+        &diags,
+        "expected `number`, found `string`"
+    ));
+}
+
+#[test]
+fn pipe_with_placeholder_no_error() {
+    let diags = check(
+        r#"
+fn add(a: number, b: number) -> number { a + b }
+const _result = 5 |> add(3, _)
+"#,
+    );
+    assert!(
+        !has_error(&diags, "E001"),
+        "pipe with placeholder should not produce errors, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn pipe_with_placeholder_wrong_type() {
+    let diags = check(
+        r#"
+fn add(a: number, b: number) -> number { a + b }
+const _result = "hello" |> add(3, _)
+"#,
+    );
+    assert!(has_error_containing(
+        &diags,
+        "expected `number`, found `string`"
+    ));
 }
