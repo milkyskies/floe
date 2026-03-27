@@ -32,15 +32,18 @@ const log = fn() Console.log("clicked")
 ```floe
 // Pipe value as first argument
 const result = [1, 2, 3, 4, 5]
-    |> Array.filter(fn(n) n > 2)
-    |> Array.map(fn(n) n * 10)
-    |> Array.sort
+    |> filter(fn(n) n > 2)
+    |> map(fn(n) n * 10)
+    |> sort
 
 // Dot shorthand — even shorter than closures
 users
-    |> Array.filter(.active)
-    |> Array.map(.name)
-    |> Array.sort
+    |> filter(.active)
+    |> map(.name)
+    |> sort
+
+// Module-qualified calls also work: Array.filter, Array.map, etc.
+// Useful when the function name alone would be ambiguous.
 
 // Placeholder _ for non-first position
 5 |> add(3, _)          // add(3, 5)
@@ -51,7 +54,7 @@ const addTen = add(10, _)   // fn(x) add(10, x)
 // Tap for side effects mid-pipeline
 data
     |> transform
-    |> Pipe.tap(Console.log)
+    |> tap(Console.log)
     |> save
 ```
 
@@ -146,11 +149,8 @@ const updated = User(..u, name: "Bob")
 const point: (number, number) = (10, 20)
 const (x, y) = point
 
-// Branded types — prevent mixing IDs
-type UserId = Brand<string, "UserId">
-type OrderId = Brand<string, "OrderId">
-
-// Newtypes — single-value wrappers
+// Newtypes — prevent mixing IDs
+type UserId { string }
 type OrderId { number }
 const id = OrderId(42)
 const OrderId(n) = id   // destructure to get inner value
@@ -276,7 +276,7 @@ for Array<Todo> {
 
 // Inline form
 export for string fn shout(self) -> string {
-    self |> String.toUpper
+    self |> String.toUpperCase
 }
 
 // Use in pipes — self is the piped value

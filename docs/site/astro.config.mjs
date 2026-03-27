@@ -43,6 +43,7 @@ export default defineConfig({
         {
           label: "Getting Started",
           items: [
+            { label: "Language Tour", slug: "guide/tour" },
             { label: "Introduction", slug: "guide/introduction" },
             { label: "Installation", slug: "guide/installation" },
             { label: "First Program", slug: "guide/first-program" },
