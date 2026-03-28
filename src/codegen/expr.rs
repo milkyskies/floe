@@ -1,5 +1,4 @@
 use super::*;
-use super::{ERROR_FIELD, OK_FIELD, TAG_FIELD, VALUE_FIELD};
 
 const DEEP_EQUAL_FN: &str = "__floeEq";
 const THROW_NOT_IMPLEMENTED: &str = "(() => { throw new Error(\"not implemented\"); })()";
@@ -505,7 +504,7 @@ impl Codegen {
             // 2. Unknown/Var type or no entry → name-based fallback
             let stdlib_fn = match self
                 .expr_types
-                .get(&(left.span.start, left.span.end))
+                .get(&left.id)
                 .and_then(|ty| Self::type_to_stdlib_module(ty))
             {
                 Some(module) => self
@@ -614,13 +613,13 @@ impl Codegen {
             }
             // `a |> parse<T>` — substitute piped value into parse
             ExprKind::Parse { type_arg, value } if matches!(value.kind, ExprKind::Placeholder) => {
-                let substituted = Expr {
-                    kind: ExprKind::Parse {
+                let substituted = Expr::synthetic(
+                    ExprKind::Parse {
                         type_arg: type_arg.clone(),
                         value: Box::new(left.clone()),
                     },
-                    span: right.span,
-                };
+                    right.span,
+                );
                 self.emit_expr(&substituted);
             }
             // `a |> f` → `f(a)` — bare function (also check stdlib)

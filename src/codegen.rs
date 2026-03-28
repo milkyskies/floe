@@ -10,12 +10,8 @@ use crate::checker::ExprTypeMap;
 use crate::parser::ast::*;
 use crate::resolve::ResolvedImports;
 use crate::stdlib::StdlibRegistry;
-use crate::type_names;
-
-const TAG_FIELD: &str = "tag";
-const OK_FIELD: &str = "ok";
-const VALUE_FIELD: &str = "value";
-const ERROR_FIELD: &str = "error";
+use crate::type_layout;
+use crate::type_layout::{ERROR_FIELD, OK_FIELD, TAG_FIELD, VALUE_FIELD};
 
 /// Code generation result: the emitted TypeScript source and whether it contains JSX.
 pub struct CodegenOutput {
@@ -53,7 +49,7 @@ pub struct Codegen {
     variant_info: HashMap<String, (String, Vec<String>)>,
     /// Locally defined function/const names - these shadow stdlib in pipe resolution
     local_names: HashSet<String>,
-    /// Expression type map from the checker, keyed by span (start, end).
+    /// Expression type map from the checker, keyed by ExprId.
     /// Used for type-directed pipe resolution.
     expr_types: ExprTypeMap,
     /// Resolved imports from other .fl files, for expanding bare imports.
@@ -470,15 +466,12 @@ impl Codegen {
                 // Emit the step expression into a buffer to detect async IIFEs
                 let step_code = if step.is_pipe {
                     let left_expr = if last_had_unwrap {
-                        Expr {
-                            kind: ExprKind::Identifier(format!("{last_temp}.value")),
-                            span: step.expr.span,
-                        }
+                        Expr::synthetic(
+                            ExprKind::Identifier(format!("{last_temp}.value")),
+                            step.expr.span,
+                        )
                     } else {
-                        Expr {
-                            kind: ExprKind::Identifier(last_temp.clone()),
-                            span: step.expr.span,
-                        }
+                        Expr::synthetic(ExprKind::Identifier(last_temp.clone()), step.expr.span)
                     };
                     let mut sub = self.sub_codegen();
                     sub.emit_pipe(&left_expr, &step.expr);
@@ -642,7 +635,7 @@ impl Codegen {
 
         // Check if return type is unit/void — if so, no implicit return needed
         let is_unit_return = decl.return_type.as_ref().is_some_and(
-            |rt| matches!(&rt.kind, TypeExprKind::Named { name, .. } if name == type_names::UNIT),
+            |rt| matches!(&rt.kind, TypeExprKind::Named { name, .. } if name == type_layout::TYPE_UNIT),
         );
 
         if let Some(ret) = &decl.return_type {
@@ -748,7 +741,7 @@ impl Codegen {
         self.push(")");
 
         let is_unit_return = func.return_type.as_ref().is_some_and(
-            |rt| matches!(&rt.kind, TypeExprKind::Named { name, .. } if name == type_names::UNIT),
+            |rt| matches!(&rt.kind, TypeExprKind::Named { name, .. } if name == type_layout::TYPE_UNIT),
         );
 
         if let Some(ret) = &func.return_type {
@@ -996,13 +989,13 @@ impl Codegen {
                 name, type_args, ..
             } => {
                 // Option<T> becomes T | undefined
-                if name == type_names::OPTION && type_args.len() == 1 {
+                if name == type_layout::TYPE_OPTION && type_args.len() == 1 {
                     self.emit_type_expr(&type_args[0]);
                     self.push(" | undefined");
                     return;
                 }
                 // Result<T, E> becomes { ok: true; value: T } | { ok: false; error: E }
-                if name == type_names::RESULT && type_args.len() == 2 {
+                if name == type_layout::TYPE_RESULT && type_args.len() == 2 {
                     self.push(&format!("{{ {OK_FIELD}: true; {VALUE_FIELD}: "));
                     self.emit_type_expr(&type_args[0]);
                     self.push(&format!(" }} | {{ {OK_FIELD}: false; {ERROR_FIELD}: "));
@@ -1012,7 +1005,7 @@ impl Codegen {
                 }
 
                 // Unit type () becomes void in TypeScript
-                if name == type_names::UNIT {
+                if name == type_layout::TYPE_UNIT {
                     self.push("void");
                     return;
                 }

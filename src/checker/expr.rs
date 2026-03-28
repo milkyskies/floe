@@ -1,13 +1,12 @@
 use super::*;
-use crate::type_names;
+use crate::type_layout;
 
 // ── Expression Checking ──────────────────────────────────────
 
 impl Checker {
     pub(super) fn check_expr(&mut self, expr: &Expr) -> Type {
         let ty = self.check_expr_inner(expr);
-        self.expr_types
-            .insert((expr.span.start, expr.span.end), ty.clone());
+        self.expr_types.insert(expr.id, ty.clone());
         ty
     }
 
@@ -26,7 +25,7 @@ impl Checker {
             ExprKind::Bool(_) => Type::Bool,
 
             ExprKind::Identifier(name) => {
-                self.used_names.insert(name.clone());
+                self.unused.used_names.insert(name.clone());
                 // Check for ambiguous bare variant usage
                 if let Some(unions) = self.ambiguous_variants.get(name) {
                     let union_list = unions.join("` and `");
@@ -109,8 +108,8 @@ impl Checker {
                 let ty = self.check_expr(inner);
                 // Rule 5: ? only allowed in functions returning Result/Option,
                 // OR inside a collect block (where ? accumulates errors)
-                if !self.inside_collect {
-                    match &self.current_return_type {
+                if !self.ctx.inside_collect {
+                    match &self.ctx.current_return_type {
                         Some(ret) if ret.is_result() || ret.is_option() => {}
                         Some(_) => {
                             self.diagnostics.push(
@@ -142,8 +141,8 @@ impl Checker {
                 // Unwrap the inner type
                 match ty {
                     Type::Result { ok, err } => {
-                        if self.inside_collect {
-                            self.collect_err_type = Some(*err);
+                        if self.ctx.inside_collect {
+                            self.ctx.collect_err_type = Some(*err);
                         }
                         *ok
                     }
@@ -175,7 +174,7 @@ impl Checker {
                     && let ExprKind::Identifier(module) = &object.kind
                     && let Some(stdlib_fn) = self.stdlib.lookup(module, field)
                 {
-                    self.used_names.insert(module.clone());
+                    self.unused.used_names.insert(module.clone());
                     let ret = stdlib_fn.return_type.clone();
                     for arg in args {
                         match arg {
@@ -189,7 +188,7 @@ impl Checker {
 
                 // Check for untrusted import call without try
                 if let ExprKind::Identifier(name) = &callee.kind
-                    && !self.inside_try
+                    && !self.ctx.inside_try
                     && self.untrusted_imports.contains(name)
                 {
                     self.diagnostics.push(
@@ -206,7 +205,7 @@ impl Checker {
                 }
 
                 // Save pipe context before checking callee (which would consume it)
-                let piped_ty = self.pipe_input_type.take();
+                let piped_ty = self.ctx.pipe_input_type.take();
                 let piped_ty_was_none = piped_ty.is_none();
 
                 // Infer lambda param type from piped array element type
@@ -214,7 +213,7 @@ impl Checker {
                 if let Some(ref piped) = piped_ty
                     && let Type::Array(elem_ty) = piped
                 {
-                    self.lambda_param_hint = Some((**elem_ty).clone());
+                    self.ctx.lambda_param_hint = Some((**elem_ty).clone());
                 }
 
                 // Detect placeholder args for partial application
@@ -248,7 +247,7 @@ impl Checker {
                     })
                     .collect();
                 // Clear any unconsumed hint
-                self.lambda_param_hint = None;
+                self.ctx.lambda_param_hint = None;
 
                 // Handle piped value insertion:
                 // - If the call has placeholders, the piped value replaces the `_`
@@ -510,7 +509,7 @@ impl Checker {
                 spread,
                 args,
             } => {
-                self.used_names.insert(type_name.clone());
+                self.unused.used_names.insert(type_name.clone());
 
                 let type_info = self.env.lookup_type(type_name).cloned();
                 if type_info.is_none() {
@@ -816,11 +815,11 @@ impl Checker {
                             .map(|t| self.resolve_type(t))
                             .unwrap_or_else(|| {
                                 // Use lambda param hint from calling context if available
-                                if let Some(hint) = self.lambda_param_hint.take() {
+                                if let Some(hint) = self.ctx.lambda_param_hint.take() {
                                     return hint;
                                 }
                                 // In event handler context, infer Event type for the parameter
-                                if self.event_handler_context && p.destructure.is_none() {
+                                if self.ctx.event_handler_context && p.destructure.is_none() {
                                     Type::Named("Event".to_string())
                                 } else {
                                     self.fresh_type_var()
@@ -835,7 +834,9 @@ impl Checker {
                                     for field in fields {
                                         // Infer type for well-known field names
                                         let field_ty = match field.as_str() {
-                                            "error" => Type::Named(type_names::ERROR.to_string()),
+                                            "error" => {
+                                                Type::Named(type_layout::TYPE_ERROR.to_string())
+                                            }
                                             _ => Type::Unknown,
                                         };
                                         self.env.define(field, field_ty);
@@ -909,13 +910,11 @@ impl Checker {
             }
 
             ExprKind::Try(inner) => {
-                let prev_inside_try = self.inside_try;
-                self.inside_try = true;
-                let inner_ty = self.check_expr(inner);
-                self.inside_try = prev_inside_try;
+                let inner_ty =
+                    self.with_context(|ctx| ctx.inside_try = true, |this| this.check_expr(inner));
                 Type::Result {
                     ok: Box::new(inner_ty),
-                    err: Box::new(Type::Named(type_names::ERROR.to_string())),
+                    err: Box::new(Type::Named(type_layout::TYPE_ERROR.to_string())),
                 }
             }
 
@@ -928,14 +927,14 @@ impl Checker {
                 }
                 Type::Result {
                     ok: Box::new(t),
-                    err: Box::new(Type::Named(type_names::ERROR.to_string())),
+                    err: Box::new(Type::Named(type_layout::TYPE_ERROR.to_string())),
                 }
             }
 
             ExprKind::Ok(inner) => {
                 let inner_ty = self.check_expr(inner);
                 // Infer error type from enclosing function's return type if available
-                let err_ty = match &self.current_return_type {
+                let err_ty = match &self.ctx.current_return_type {
                     Some(Type::Result { err, .. }) => (**err).clone(),
                     _ => Type::Unknown,
                 };
@@ -948,7 +947,7 @@ impl Checker {
             ExprKind::Err(inner) => {
                 let err_ty = self.check_expr(inner);
                 // Infer ok type from enclosing function's return type if available
-                let ok_ty = match &self.current_return_type {
+                let ok_ty = match &self.ctx.current_return_type {
                     Some(Type::Result { ok, .. }) => (**ok).clone(),
                     _ => Type::Unknown,
                 };
@@ -992,8 +991,8 @@ impl Checker {
                 // The block returns Result<T, Array<E>> where T is the last expression type
                 // and E is the error type from ? operations
                 self.env.push_scope();
-                let prev_inside_collect = self.inside_collect;
-                self.inside_collect = true;
+                let prev_inside_collect = self.ctx.inside_collect;
+                self.ctx.inside_collect = true;
                 let mut last_type = Type::Unit;
                 let mut err_type: Option<Type> = None;
 
@@ -1010,15 +1009,15 @@ impl Checker {
                     }
                     // Collect error types from ? operations within
                     // (The checker tracks them via collect_err_type)
-                    if let Some(ref et) = self.collect_err_type
+                    if let Some(ref et) = self.ctx.collect_err_type
                         && err_type.is_none()
                     {
                         err_type = Some(et.clone());
                     }
                 }
 
-                self.inside_collect = prev_inside_collect;
-                self.collect_err_type = None;
+                self.ctx.inside_collect = prev_inside_collect;
+                self.ctx.collect_err_type = None;
                 self.env.pop_scope();
 
                 let e = err_type.unwrap_or(Type::Unknown);
@@ -1028,25 +1027,23 @@ impl Checker {
                 }
             }
 
-            ExprKind::Block(items) => {
-                self.env.push_scope();
+            ExprKind::Block(items) => self.in_scope(|this| {
                 let mut last_type = Type::Unit;
                 for (i, item) in items.iter().enumerate() {
                     let is_last = i == items.len() - 1;
                     if is_last {
                         if let ItemKind::Expr(expr) = &item.kind {
                             // Check last expression once and use its type as block type
-                            last_type = self.check_expr(expr);
+                            last_type = this.check_expr(expr);
                         } else {
-                            self.check_item(item);
+                            this.check_item(item);
                         }
                     } else {
-                        self.check_item(item);
+                        this.check_item(item);
                     }
                 }
-                self.env.pop_scope();
                 last_type
-            }
+            }),
 
             ExprKind::Grouped(inner) => self.check_expr(inner),
 
@@ -1184,7 +1181,7 @@ impl Checker {
         if let Some((module, func_name)) = member_info
             && let Some(stdlib_fn) = self.stdlib.lookup(module, func_name).cloned()
         {
-            self.used_names.insert(module.to_string());
+            self.unused.used_names.insert(module.to_string());
             let display = format!("{module}.{func_name}");
             return self.validate_stdlib_pipe_call(&stdlib_fn, &display, left_ty, right);
         }
@@ -1212,22 +1209,23 @@ impl Checker {
                 && let Some(stdlib_fn) = self.stdlib.lookup(m, name).cloned()
             {
                 // Found via type-directed resolution
-                self.used_names.insert(name.to_string());
+                self.unused.used_names.insert(name.to_string());
                 let display = format!("{m}.{name}");
                 return self.validate_stdlib_pipe_call(&stdlib_fn, &display, left_ty, right);
             } else if !fallback_matches.is_empty() && self.env.lookup(name).is_none() {
                 // Found via name-based fallback (only if not locally defined)
                 let stdlib_fn = fallback_matches[0].clone();
-                self.used_names.insert(name.to_string());
+                self.unused.used_names.insert(name.to_string());
                 return self.validate_stdlib_pipe_call(&stdlib_fn, name, left_ty, right);
             }
         }
 
         // Default: check normally, with pipe context for arg validation
-        let prev_pipe = self.pipe_input_type.take();
-        self.pipe_input_type = Some(left_ty.clone());
-        let right_ty = self.check_expr(right);
-        self.pipe_input_type = prev_pipe;
+        let left_ty_clone = left_ty.clone();
+        let right_ty = self.with_context(
+            |ctx| ctx.pipe_input_type = Some(left_ty_clone),
+            |this| this.check_expr(right),
+        );
 
         // If the right side is a bare function identifier (not a call),
         // the pipe effectively calls it: `a |> f` means `f(a)`.
@@ -1309,10 +1307,10 @@ impl Checker {
             );
         }
         if let Type::Array(elem) = left_ty {
-            self.lambda_param_hint = Some((**elem).clone());
+            self.ctx.lambda_param_hint = Some((**elem).clone());
         }
         self.check_pipe_right_args(right);
-        self.lambda_param_hint = None;
+        self.ctx.lambda_param_hint = None;
         ret
     }
 
@@ -1475,13 +1473,13 @@ impl Checker {
 
     fn type_to_stdlib_module(ty: &Type) -> Option<&'static str> {
         match ty {
-            Type::Array(_) => Some(type_names::MOD_ARRAY),
-            Type::Map { .. } => Some(type_names::MOD_MAP),
-            Type::Set { .. } => Some(type_names::MOD_SET),
-            Type::String => Some(type_names::MOD_STRING),
-            Type::Number => Some(type_names::MOD_NUMBER),
-            Type::Option(_) => Some(type_names::MOD_OPTION),
-            Type::Result { .. } => Some(type_names::MOD_RESULT),
+            Type::Array(_) => Some(type_layout::MOD_ARRAY),
+            Type::Map { .. } => Some(type_layout::MOD_MAP),
+            Type::Set { .. } => Some(type_layout::MOD_SET),
+            Type::String => Some(type_layout::MOD_STRING),
+            Type::Number => Some(type_layout::MOD_NUMBER),
+            Type::Option(_) => Some(type_layout::MOD_OPTION),
+            Type::Result { .. } => Some(type_layout::MOD_RESULT),
             _ => None,
         }
     }
@@ -1634,26 +1632,26 @@ pub(crate) fn simple_resolve_type_expr(type_expr: &crate::parser::ast::TypeExpr)
         TypeExprKind::Named {
             name, type_args, ..
         } => match name.as_str() {
-            type_names::NUMBER => Type::Number,
-            type_names::STRING => Type::String,
-            type_names::BOOLEAN => Type::Bool,
-            type_names::UNIT => Type::Unit,
-            type_names::UNDEFINED => Type::Undefined,
-            type_names::ARRAY => {
+            type_layout::TYPE_NUMBER => Type::Number,
+            type_layout::TYPE_STRING => Type::String,
+            type_layout::TYPE_BOOLEAN => Type::Bool,
+            type_layout::TYPE_UNIT => Type::Unit,
+            type_layout::TYPE_UNDEFINED => Type::Undefined,
+            type_layout::TYPE_ARRAY => {
                 let inner = type_args
                     .first()
                     .map(simple_resolve_type_expr)
                     .unwrap_or(Type::Unknown);
                 Type::Array(Box::new(inner))
             }
-            type_names::OPTION => {
+            type_layout::TYPE_OPTION => {
                 let inner = type_args
                     .first()
                     .map(simple_resolve_type_expr)
                     .unwrap_or(Type::Unknown);
                 Type::Option(Box::new(inner))
             }
-            type_names::RESULT => {
+            type_layout::TYPE_RESULT => {
                 let ok = type_args
                     .first()
                     .map(simple_resolve_type_expr)
