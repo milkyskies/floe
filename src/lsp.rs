@@ -1,13 +1,14 @@
 mod completion;
 mod handlers;
 mod resolution;
+mod stdlib_hover;
 mod symbols;
 
 #[cfg(test)]
 mod tests;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -15,7 +16,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LspService, Server};
 
 use crate::checker::Checker;
-use crate::diagnostic::{self as zs_diag, Severity};
+use crate::diagnostic::{self as floe_diag, Severity};
 use crate::parser::Parser;
 
 use completion::is_pipe_compatible;
@@ -103,18 +104,30 @@ fn is_word_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-/// Find the project root directory (where node_modules lives).
-fn find_project_dir(start: &Path) -> PathBuf {
-    let mut dir = start.to_path_buf();
-    loop {
-        if dir.join("node_modules").is_dir() || dir.join("package.json").is_file() {
-            return dir;
-        }
-        if !dir.pop() {
-            return start.to_path_buf();
-        }
+/// Check if the cursor is on the definition name itself (not in the body).
+///
+/// The symbol's start..end covers the entire declaration (e.g. the whole
+/// function including its body). We only want to skip goto-def when the
+/// cursor is literally on the name token at the definition site, not when
+/// it's on a usage of that name inside the declaration body.
+fn is_cursor_on_def_name(source: &str, cursor_offset: usize, sym: &symbols::Symbol) -> bool {
+    // The name must appear somewhere near the start of the declaration.
+    // Search for the first occurrence of the name within the item span.
+    let end = sym.end.min(source.len());
+    if sym.start >= end {
+        return false;
+    }
+    let span_slice = &source[sym.start..end];
+    if let Some(rel_pos) = span_slice.find(&sym.name) {
+        let name_start = sym.start + rel_pos;
+        let name_end = name_start + sym.name.len();
+        cursor_offset >= name_start && cursor_offset < name_end
+    } else {
+        false
     }
 }
+
+use crate::find_project_dir;
 
 // ── Document State ──────────────────────────────────────────────
 
@@ -144,7 +157,6 @@ const KEYWORDS: &[(&str, &str)] = &[
     ),
     ("type", "type ${1:Name} = {\n\t${0:field}: ${2:Type},\n}"),
     ("return", "return ${0:expr}"),
-    ("if", "if ${1:condition} {\n\t${0:body}\n}"),
     ("async", "async "),
     ("await", "await ${0:expr}"),
     ("opaque", "opaque type ${1:Name} = ${0:BaseType}"),
@@ -155,6 +167,11 @@ const BUILTINS: &[(&str, &str, &str)] = &[
     ("Err", "Err(${0:error})", "Err(error: E) -> Result<T, E>"),
     ("Some", "Some(${0:value})", "Some(value: T) -> Option<T>"),
     ("None", "None", "None -> Option<T>"),
+    (
+        "parse",
+        "parse<${1:Type}>(${0:value})",
+        "parse<T>(value) -> Result<T, Error>",
+    ),
     ("true", "true", "bool literal"),
     ("false", "false", "bool literal"),
 ];
@@ -181,33 +198,62 @@ impl FloeLsp {
     /// Parse and type-check a document, update symbol index, publish diagnostics.
     async fn update_document(&self, uri: Url, source: &str) {
         let (diagnostics, index, type_map) = match Parser::new(source).parse_program() {
-            Err(parse_errors) => {
-                let zs_diags = zs_diag::from_parse_errors(&parse_errors);
+            Err(_) => {
+                // Full parse failed — use lossy parse to get a partial AST so
+                // we can still build a symbol index for completions/hover.
+                let (program, parse_errors) = Parser::parse_lossy(source);
+                let floe_diags = floe_diag::from_parse_errors(&parse_errors);
+                let index = SymbolIndex::build(&program);
+                let type_map = HashMap::new();
                 (
-                    self.convert_diagnostics(source, &zs_diags),
-                    SymbolIndex::default(),
-                    HashMap::new(),
+                    self.convert_diagnostics(source, &floe_diags),
+                    index,
+                    type_map,
                 )
             }
             Ok(program) => {
                 let mut index = SymbolIndex::build(&program);
-                let (mut check_diags, type_map) = Checker::new().check_with_types(&program);
 
-                // Resolve imports: enrich symbols from .d.ts, validate relative paths
+                // Resolve .fl imports for cross-file type checking
+                let resolved_imports = if let Ok(source_path) = uri.to_file_path() {
+                    crate::resolve::resolve_imports(&source_path, &program)
+                } else {
+                    Default::default()
+                };
+
+                // Resolve .d.ts imports BEFORE the checker so it gets npm type info
+                let mut dts_map = HashMap::new();
+                let mut import_diags_early = Vec::new();
                 if let Ok(source_path) = uri.to_file_path() {
                     let source_dir = source_path.parent().unwrap_or(Path::new("."));
-                    // Walk up to find project root (where node_modules lives)
                     let project_dir = find_project_dir(source_dir);
                     let cache = self.dts_cache.read().await.clone();
                     let (import_diags, new_cache) =
                         enrich_from_imports(&program, &project_dir, source_dir, &mut index, &cache);
-                    check_diags.extend(import_diags);
-                    // Update cache with newly resolved modules
+                    import_diags_early = import_diags;
+
+                    // Use tsgo for fully-resolved types — no fallback
+                    let mut tsgo_resolver = crate::interop::TsgoResolver::new(&project_dir);
+                    dts_map = tsgo_resolver.resolve_imports(&program, &resolved_imports);
+
                     if !new_cache.is_empty() {
                         let mut cache_write = self.dts_cache.write().await;
                         cache_write.extend(new_cache);
                     }
                 }
+
+                // Add imported for-block functions to the symbol index
+                index.add_imported_for_blocks(&resolved_imports);
+
+                let checker = if resolved_imports.is_empty() && dts_map.is_empty() {
+                    Checker::new()
+                } else if dts_map.is_empty() {
+                    Checker::with_imports(resolved_imports)
+                } else {
+                    Checker::with_all_imports(resolved_imports, dts_map)
+                };
+                let (mut check_diags, type_map) = checker.check_with_types(&program);
+                check_diags.extend(import_diags_early);
 
                 (
                     self.convert_diagnostics(source, &check_diags),
@@ -235,9 +281,9 @@ impl FloeLsp {
     fn convert_diagnostics(
         &self,
         source: &str,
-        zs_diagnostics: &[zs_diag::Diagnostic],
+        floe_diagnostics: &[floe_diag::Diagnostic],
     ) -> Vec<Diagnostic> {
-        zs_diagnostics
+        floe_diagnostics
             .iter()
             .map(|d| {
                 let severity = match d.severity {
@@ -347,8 +393,129 @@ impl FloeLsp {
             }
         }
 
+        // Add stdlib functions to pipe completions
+        let stdlib = crate::stdlib::StdlibRegistry::new();
+        for f in stdlib.all_functions() {
+            if !prefix.is_empty() && !f.name.starts_with(prefix) {
+                continue;
+            }
+            let first_param_str = f.params.first().map(stdlib_hover::format_type);
+            let compatible = piped_type
+                .zip(first_param_str.as_deref())
+                .is_some_and(|(pt, fpt)| completion::is_pipe_compatible(fpt, pt));
+
+            let sort_prefix = if compatible { "0" } else { "1" };
+            let label = format!("{}.{}", f.module, f.name);
+            let params: Vec<String> = f.params.iter().map(stdlib_hover::format_type).collect();
+            let ret = stdlib_hover::format_type(&f.return_type);
+            let detail = format!("({}) -> {}", params.join(", "), ret);
+
+            let item = CompletionItem {
+                label: label.clone(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(detail),
+                insert_text: Some(label.clone()),
+                insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
+                sort_text: Some(format!("{sort_prefix}2{label}")),
+                ..Default::default()
+            };
+
+            if compatible {
+                matched.push(item);
+            } else {
+                unmatched.push(item);
+            }
+        }
+
         matched.extend(unmatched);
         matched
+    }
+
+    /// Resolve an import specifier to a Location in the source file (.d.ts or .fl).
+    /// For `.d.ts` files, finds the line where the symbol is exported.
+    /// For relative imports, finds the file and looks for the symbol definition.
+    fn resolve_import_location(
+        source_uri: &Url,
+        specifier: &str,
+        symbol_name: &str,
+    ) -> Option<Location> {
+        let source_path = source_uri.to_file_path().ok()?;
+        let source_dir = source_path.parent()?;
+
+        let is_relative = specifier.starts_with("./") || specifier.starts_with("../");
+
+        let resolved_path = if is_relative {
+            resolution::resolve_relative_import(specifier, source_dir)?
+        } else {
+            let project_dir = find_project_dir(source_dir);
+            resolution::resolve_npm_dts(specifier, &project_dir)?
+        };
+
+        let file_content = std::fs::read_to_string(&resolved_path).ok()?;
+        let target_uri = Url::from_file_path(&resolved_path).ok()?;
+
+        // Search for the export line containing the symbol name
+        for (line_num, line) in file_content.lines().enumerate() {
+            let trimmed = line.trim();
+            // Match patterns like: export function symbolName, export const symbolName,
+            // export type symbolName, export interface symbolName, export declare ...
+            let is_export_of_symbol = trimmed.contains("export")
+                && (trimmed.contains(&format!("function {symbol_name}"))
+                    || trimmed.contains(&format!("const {symbol_name}"))
+                    || trimmed.contains(&format!("type {symbol_name}"))
+                    || trimmed.contains(&format!("interface {symbol_name}"))
+                    || trimmed.contains(&format!("fn {symbol_name}")));
+
+            if is_export_of_symbol {
+                // Find the column where the symbol name starts on this line
+                let col = line.find(symbol_name).unwrap_or(0) as u32;
+                let pos = Position::new(line_num as u32, col);
+                let end_pos = Position::new(line_num as u32, col + symbol_name.len() as u32);
+                return Some(Location {
+                    uri: target_uri,
+                    range: Range {
+                        start: pos,
+                        end: end_pos,
+                    },
+                });
+            }
+        }
+
+        // Fallback: jump to the top of the resolved file
+        Some(Location {
+            uri: target_uri,
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 0),
+            },
+        })
+    }
+
+    /// Resolve an import path string to a Location at line 1 of the target file.
+    /// Used when the cursor is on the path string itself (e.g., `"../types"`).
+    fn resolve_import_path_location(source_uri: &Url, specifier: &str) -> Option<Location> {
+        let source_path = source_uri.to_file_path().ok()?;
+        let source_dir = source_path.parent()?;
+
+        let is_relative = specifier.starts_with("./") || specifier.starts_with("../");
+
+        let resolved_path = if is_relative {
+            resolution::resolve_relative_import(specifier, source_dir)?
+        } else {
+            let project_dir = find_project_dir(source_dir);
+            resolution::resolve_npm_dts(specifier, &project_dir)?
+        };
+
+        let target_uri = Url::from_file_path(&resolved_path).ok()?;
+
+        // Jump to the start of the file
+        Some(Location {
+            uri: target_uri,
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 0),
+            },
+        })
     }
 }
 

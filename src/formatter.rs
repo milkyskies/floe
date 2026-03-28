@@ -29,11 +29,14 @@ pub(crate) enum PipeSegment {
     Token(String),
 }
 
+const MAX_WIDTH: usize = 100;
+
 pub(crate) struct Formatter<'src> {
     source: &'src str,
     out: String,
     pub(crate) indent: usize,
     at_line_start: bool,
+    col: usize,
 }
 
 impl<'src> Formatter<'src> {
@@ -43,6 +46,7 @@ impl<'src> Formatter<'src> {
             out: String::with_capacity(source.len()),
             indent: 0,
             at_line_start: true,
+            col: 0,
         }
     }
 
@@ -68,7 +72,6 @@ impl<'src> Formatter<'src> {
             SyntaxKind::BLOCK_EXPR => self.fmt_block(node),
             SyntaxKind::PIPE_EXPR => self.fmt_pipe(node),
             SyntaxKind::MATCH_EXPR => self.fmt_match(node),
-            SyntaxKind::IF_EXPR => self.fmt_if(node),
             SyntaxKind::BINARY_EXPR => self.fmt_binary(node),
             SyntaxKind::UNARY_EXPR | SyntaxKind::AWAIT_EXPR => self.fmt_unary(node),
             SyntaxKind::CALL_EXPR => self.fmt_call(node),
@@ -79,15 +82,19 @@ impl<'src> Formatter<'src> {
             SyntaxKind::ARROW_EXPR => self.fmt_arrow(node),
             SyntaxKind::RETURN_EXPR => self.fmt_return(node),
             SyntaxKind::GROUPED_EXPR => self.fmt_grouped(node),
+            SyntaxKind::TUPLE_EXPR => self.fmt_tuple(node),
             SyntaxKind::ARRAY_EXPR => self.fmt_array(node),
             SyntaxKind::OK_EXPR | SyntaxKind::ERR_EXPR | SyntaxKind::SOME_EXPR => {
                 self.fmt_wrapper_expr(node)
             }
+            SyntaxKind::PARSE_EXPR => self.fmt_parse_expr(node),
             SyntaxKind::JSX_ELEMENT => self.fmt_jsx(node),
             SyntaxKind::TYPE_DEF_UNION => self.fmt_union(node),
             SyntaxKind::TYPE_DEF_RECORD => self.fmt_record_def(node),
             SyntaxKind::TYPE_DEF_ALIAS => self.fmt_type_alias_def(node),
             SyntaxKind::TYPE_EXPR => self.fmt_type_expr(node),
+            SyntaxKind::COLLECT_EXPR => self.fmt_verbatim(node),
+            SyntaxKind::TEST_BLOCK | SyntaxKind::ASSERT_EXPR => self.fmt_verbatim(node),
             _ => self.fmt_verbatim(node),
         }
     }
@@ -97,28 +104,89 @@ impl<'src> Formatter<'src> {
     fn fmt_program(&mut self, node: &SyntaxNode) {
         let mut first = true;
         let mut prev_kind: Option<SyntaxKind> = None;
+        let mut prev_was_comment = false;
 
-        for child in node.children() {
-            let child_inner_kind = self.inner_decl_kind(&child);
+        for child_or_tok in node.children_with_tokens() {
+            match child_or_tok {
+                rowan::NodeOrToken::Token(tok) => {
+                    if tok.kind() == SyntaxKind::COMMENT || tok.kind() == SyntaxKind::BLOCK_COMMENT
+                    {
+                        if !first && !prev_was_comment {
+                            self.newline();
+                            self.newline();
+                        } else if prev_was_comment {
+                            self.newline();
+                        }
+                        self.write(tok.text());
+                        first = false;
+                        prev_was_comment = true;
+                    }
+                }
+                rowan::NodeOrToken::Node(child) => {
+                    let trailing_comments = self.trailing_comments_in(&child);
+                    let child_inner_kind = self.inner_decl_kind(&child);
 
-            if !first {
-                let want_blank = match (prev_kind, child_inner_kind) {
-                    (Some(a), Some(b)) if a != b => true,
-                    (Some(SyntaxKind::IMPORT_DECL), Some(SyntaxKind::IMPORT_DECL)) => false,
-                    _ => true,
-                };
-                if want_blank {
-                    self.newline();
-                    self.newline();
-                } else {
-                    self.newline();
+                    if !first {
+                        if prev_was_comment {
+                            self.newline();
+                            self.newline();
+                        } else {
+                            let want_blank = match (prev_kind, child_inner_kind) {
+                                (Some(a), Some(b)) if a != b => true,
+                                (Some(SyntaxKind::IMPORT_DECL), Some(SyntaxKind::IMPORT_DECL)) => {
+                                    false
+                                }
+                                _ => true,
+                            };
+                            if want_blank {
+                                self.newline();
+                                self.newline();
+                            } else {
+                                self.newline();
+                            }
+                        }
+                    }
+
+                    self.fmt_node(&child);
+
+                    // Emit trailing comments that were inside the item's CST
+                    prev_was_comment = false;
+                    for comment in &trailing_comments {
+                        self.newline();
+                        self.newline();
+                        self.write(comment);
+                        prev_was_comment = true;
+                    }
+
+                    first = false;
+                    if !prev_was_comment {
+                        prev_kind = child_inner_kind;
+                    }
                 }
             }
-
-            self.fmt_node(&child);
-            first = false;
-            prev_kind = child_inner_kind;
         }
+    }
+
+    /// Collect trailing comment tokens from a node's descendants
+    /// (comments after the last non-trivia content).
+    fn trailing_comments_in(&self, node: &SyntaxNode) -> Vec<String> {
+        let mut comments = Vec::new();
+        let all_tokens: Vec<_> = node
+            .descendants_with_tokens()
+            .filter_map(|t| t.into_token())
+            .collect();
+
+        for tok in all_tokens.into_iter().rev() {
+            match tok.kind() {
+                SyntaxKind::COMMENT | SyntaxKind::BLOCK_COMMENT => {
+                    comments.push(tok.text().to_string());
+                }
+                k if k.is_trivia() => continue,
+                _ => break,
+            }
+        }
+        comments.reverse();
+        comments
     }
 
     fn inner_decl_kind(&self, node: &SyntaxNode) -> Option<SyntaxKind> {
@@ -141,19 +209,47 @@ impl<'src> Formatter<'src> {
 
     pub(crate) fn write(&mut self, s: &str) {
         self.out.push_str(s);
+        if let Some(pos) = s.rfind('\n') {
+            self.col = s.len() - pos - 1;
+        } else {
+            self.col += s.len();
+        }
         self.at_line_start = s.ends_with('\n');
     }
 
     pub(crate) fn newline(&mut self) {
         self.out.push('\n');
         self.at_line_start = true;
+        self.col = 0;
     }
 
     pub(crate) fn write_indent(&mut self) {
+        let width = self.indent * 4;
         for _ in 0..self.indent {
             self.out.push_str("    ");
         }
+        self.col = width;
         self.at_line_start = false;
+    }
+
+    /// Format something to a temporary buffer and return the result.
+    /// Used to check if inline formatting fits within the line width.
+    pub(crate) fn try_inline<F>(&self, f: F) -> String
+    where
+        F: FnOnce(&mut Formatter<'_>),
+    {
+        let mut sub = Formatter::new(self.source);
+        sub.indent = self.indent;
+        sub.col = self.col;
+        f(&mut sub);
+        sub.out
+    }
+
+    /// Check if an inline string fits on the current line.
+    /// For multi-line content (e.g., match bodies), only the first line is checked.
+    pub(crate) fn fits_inline(&self, text: &str) -> bool {
+        let first_line_len = text.find('\n').unwrap_or(text.len());
+        self.col + first_line_len <= MAX_WIDTH
     }
 
     // ── CST query helpers ───────────────────────────────────────
@@ -171,22 +267,35 @@ impl<'src> Formatter<'src> {
     }
 
     pub(crate) fn collect_idents(&self, node: &SyntaxNode) -> Vec<String> {
-        node.children_with_tokens()
-            .filter_map(|t| t.into_token())
-            .filter(|t| t.kind() == SyntaxKind::IDENT)
-            .map(|t| t.text().to_string())
-            .collect()
+        self.collect_idents_until(node, |_| false)
     }
 
     pub(crate) fn collect_idents_direct(&self, node: &SyntaxNode) -> Vec<String> {
         self.collect_idents(node)
     }
 
+    pub(crate) fn collect_idents_before_lparen(&self, node: &SyntaxNode) -> Vec<String> {
+        self.collect_idents_until(node, |k| k == SyntaxKind::L_PAREN)
+    }
+
     pub(crate) fn collect_idents_before_eq(&self, node: &SyntaxNode) -> Vec<String> {
+        self.collect_idents_until(node, |k| k == SyntaxKind::EQUAL)
+    }
+
+    pub(crate) fn collect_idents_before_colon_or_eq(&self, node: &SyntaxNode) -> Vec<String> {
+        self.collect_idents_until(node, |k| k == SyntaxKind::EQUAL || k == SyntaxKind::COLON)
+    }
+
+    /// Collect IDENT tokens from direct children, stopping when `stop` returns true for a token kind.
+    fn collect_idents_until(
+        &self,
+        node: &SyntaxNode,
+        stop: impl Fn(SyntaxKind) -> bool,
+    ) -> Vec<String> {
         let mut idents = Vec::new();
         for t in node.children_with_tokens() {
             if let Some(tok) = t.as_token() {
-                if tok.kind() == SyntaxKind::EQUAL {
+                if stop(tok.kind()) {
                     break;
                 }
                 if tok.kind() == SyntaxKind::IDENT {
@@ -197,19 +306,18 @@ impl<'src> Formatter<'src> {
         idents
     }
 
-    pub(crate) fn collect_idents_before_colon_or_eq(&self, node: &SyntaxNode) -> Vec<String> {
-        let mut idents = Vec::new();
+    pub(crate) fn has_paren_destructuring(&self, node: &SyntaxNode) -> bool {
         for t in node.children_with_tokens() {
             if let Some(tok) = t.as_token() {
-                if tok.kind() == SyntaxKind::EQUAL || tok.kind() == SyntaxKind::COLON {
-                    break;
+                if tok.kind() == SyntaxKind::L_PAREN {
+                    return true;
                 }
-                if tok.kind() == SyntaxKind::IDENT {
-                    idents.push(tok.text().to_string());
+                if tok.kind() == SyntaxKind::EQUAL {
+                    return false;
                 }
             }
         }
-        idents
+        false
     }
 
     pub(crate) fn has_brace_destructuring(&self, node: &SyntaxNode) -> bool {
@@ -301,26 +409,21 @@ impl<'src> Formatter<'src> {
     }
 
     pub(crate) fn fmt_token_expr_after_lambda_delim(&mut self, node: &SyntaxNode) {
-        // For `|params| body`, find token expr after the second `|`.
-        // For `|| body`, find token expr after `||`.
-        let mut pipe_count = 0;
+        // For `(params) => body`, find token expr after the `=>`.
+        let mut found_arrow = false;
         for t in node.children_with_tokens() {
             if let Some(tok) = t.as_token() {
-                if tok.kind() == SyntaxKind::VERT_BAR {
-                    pipe_count += 1;
+                if tok.kind() == SyntaxKind::FAT_ARROW {
+                    found_arrow = true;
                     continue;
                 }
-                if tok.kind() == SyntaxKind::PIPE_PIPE {
-                    pipe_count = 2;
-                    continue;
-                }
-                if pipe_count >= 2 && !tok.kind().is_trivia() {
+                if found_arrow && !tok.kind().is_trivia() {
                     self.write(tok.text());
                     return;
                 }
             }
             if let Some(child) = t.into_node()
-                && pipe_count >= 2
+                && found_arrow
                 && child.kind() != SyntaxKind::PARAM
             {
                 self.fmt_node(&child);

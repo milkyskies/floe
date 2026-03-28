@@ -2,7 +2,7 @@
 title: Pipes
 ---
 
-The pipe operator `|>` is Floe's signature feature. It lets you chain transformations left-to-right, making data flow readable.
+The pipe operator `|>` chains transformations left-to-right, making data flow readable.
 
 ## Basic Pipes
 
@@ -41,7 +41,7 @@ const result = 5 |> add(3, _)
 
 ```floe
 const result = value
-  |> multiply(_, 2)
+  |> multiply(2)
   |> add(10, _)
   |> toString
 ```
@@ -56,12 +56,12 @@ todos |> Array.map(.text)
 users |> Array.sortBy(.name)
 ```
 
-`.field` creates an implicit lambda — `.done == false` is shorthand for `|t| t.done == false`.
+`.field` creates an implicit closure. `.done == false` is shorthand for `(t) => t.done == false`.
 
-For anything more complex, use `|x|`:
+For anything more complex, use an arrow closure:
 
 ```floe
-todos |> Array.map(|t| Todo(..t, done: !t.done))
+todos |> Array.map((t) => Todo(..t, done: !t.done))
 ```
 
 ## Method-Style Pipes
@@ -69,13 +69,65 @@ todos |> Array.map(|t| Todo(..t, done: !t.done))
 Pipes work with any function, including methods accessed via imports:
 
 ```floe
-import { map, filter, reduce } from "ramda"
+import trusted { map, filter, reduce } from "ramda"
 
 const total = orders
   |> filter(.status == "complete")
   |> map(.amount)
-  |> reduce(|sum, n| sum + n, 0, _)
+  |> reduce((sum, n) => sum + n, 0, _)
 ```
+
+## Debugging with `tap`
+
+Need to inspect a value mid-pipeline without breaking the chain? Use `tap`:
+
+```floe
+const result = users
+  |> Array.filter(.active)
+  |> tap(Console.log)          // logs filtered users, passes them through
+  |> Array.map(.name)
+  |> Array.sort
+```
+
+`tap` calls the function you give it (for side effects like logging), then returns the original value unchanged. It compiles to an IIFE that calls the function and returns the value.
+
+## Pipe into Match
+
+You can pipe a value directly into `match` to combine pipelines with pattern matching:
+
+```floe
+const label = price |> match {
+    _ when _ < 10 -> "cheap",
+    _ when _ < 100 -> "moderate",
+    _ -> "expensive",
+}
+```
+
+This is equivalent to `match price { ... }` but lets you keep the pipeline flowing:
+
+```floe
+const message = response.status
+    |> match {
+        200..299 -> "success",
+        404 -> "not found",
+        500..599 -> "server error",
+        s -> `unexpected: ${s}`,
+    }
+```
+
+It works at the end of a chain too:
+
+```floe
+const label = product
+    |> effectivePrice
+    |> match {
+        _ when _ < 10 -> "cheap",
+        _ when _ < 100 -> "moderate",
+        _ -> "expensive",
+    }
+```
+
+`x |> match { ... }` compiles identically to `match x { ... }`. It is pure syntax sugar for pipeline ergonomics.
 
 ## When to Use Pipes
 
@@ -92,9 +144,10 @@ Pipes shine when you have a sequence of transformations. They replace:
 Floe has three arrow-like operators:
 
 ```
-|x|  anonymous lambdas   |a| a + 1
-->   match arms / types  Ok(x) -> x, (string) -> number
-|>   pipe data            data |> transform
+fn(x) anonymous closures  fn(a) a + 1
+->    match arms / returns Ok(x) -> x, fn add(a) -> number
+=>    function types       (string) => number
+|>    pipe data             data |> transform
 ```
 
 Each has a distinct purpose. No ambiguity.

@@ -2,6 +2,12 @@ use crate::syntax::{SyntaxKind, SyntaxNode};
 
 use super::{Formatter, PipeSegment};
 
+enum NamedArgValue {
+    Ident(String),
+    Other,
+    None,
+}
+
 impl Formatter<'_> {
     pub(crate) fn fmt_block(&mut self, node: &SyntaxNode) {
         self.write("{");
@@ -15,8 +21,13 @@ impl Formatter<'_> {
             return;
         }
 
+        let child_count = children.len();
         self.indent += 1;
-        for child in &children {
+        for (i, child) in children.iter().enumerate() {
+            // Insert a blank line before the final expression in multi-statement blocks
+            if child_count >= 2 && i == child_count - 1 {
+                self.newline();
+            }
             self.newline();
             self.write_indent();
             self.fmt_node(child);
@@ -33,19 +44,25 @@ impl Formatter<'_> {
         let mut segments = Vec::new();
         self.collect_pipe_segments(node, &mut segments);
 
-        if segments.len() <= 3 {
+        // Try inline first
+        let inline = self.try_inline(|f| {
             for (i, seg) in segments.iter().enumerate() {
                 if i > 0 {
-                    self.write(" |> ");
+                    f.write(" |> ");
                 }
-                self.fmt_pipe_segment(seg);
+                f.fmt_pipe_segment(seg);
             }
+        });
+
+        if self.fits_inline(&inline) {
+            self.write(&inline);
         } else {
+            // Vertical: first segment on current line, rest indented with |>
             for (i, seg) in segments.iter().enumerate() {
                 if i > 0 {
                     self.newline();
                     self.write_indent();
-                    self.write("|> ");
+                    self.write("    |> ");
                 }
                 self.fmt_pipe_segment(seg);
             }
@@ -105,7 +122,7 @@ impl Formatter<'_> {
     // ── Match ───────────────────────────────────────────────────
 
     pub(crate) fn fmt_match(&mut self, node: &SyntaxNode) {
-        self.write("match ");
+        self.write("match");
 
         let mut wrote_subject = false;
         for child in node.children() {
@@ -113,12 +130,35 @@ impl Formatter<'_> {
                 break;
             }
             if !wrote_subject {
+                self.write(" ");
                 self.fmt_node(&child);
                 wrote_subject = true;
             }
         }
         if !wrote_subject {
-            self.fmt_token_expr_after_keyword(node, SyntaxKind::KW_MATCH);
+            // Check if this is a subjectless match (piped): `|> match { ... }`
+            // The first non-trivia token after `match` keyword is `{`, so don't emit it as a subject.
+            let is_subjectless = {
+                let mut past_kw = false;
+                let mut result = false;
+                for t in node.children_with_tokens() {
+                    if let Some(tok) = t.as_token() {
+                        if tok.kind() == SyntaxKind::KW_MATCH {
+                            past_kw = true;
+                            continue;
+                        }
+                        if past_kw && !tok.kind().is_trivia() {
+                            result = tok.kind() == SyntaxKind::L_BRACE;
+                            break;
+                        }
+                    }
+                }
+                result
+            };
+            if !is_subjectless {
+                self.write(" ");
+                self.fmt_token_expr_after_keyword(node, SyntaxKind::KW_MATCH);
+            }
         }
 
         self.write(" {");
@@ -145,6 +185,29 @@ impl Formatter<'_> {
         if let Some(pattern) = node.children().find(|c| c.kind() == SyntaxKind::PATTERN) {
             self.fmt_pattern(&pattern);
         }
+
+        // Guard: `when expr`
+        if let Some(guard) = node
+            .children()
+            .find(|c| c.kind() == SyntaxKind::MATCH_GUARD)
+        {
+            self.write(" when ");
+            // Format the guard expression (skip the `when` keyword token)
+            for t in guard.children_with_tokens() {
+                if let Some(tok) = t.as_token() {
+                    if tok.kind() == SyntaxKind::KW_WHEN || tok.kind().is_trivia() {
+                        continue;
+                    }
+                    self.write(tok.text());
+                    break;
+                }
+                if let Some(child) = t.into_node() {
+                    self.fmt_node(&child);
+                    break;
+                }
+            }
+        }
+
         self.write(" -> ");
 
         // Body: expression after ->
@@ -237,6 +300,57 @@ impl Formatter<'_> {
                         }
                         return;
                     }
+                    SyntaxKind::L_PAREN => {
+                        self.write("(");
+                        for (i, p) in sub_patterns.iter().enumerate() {
+                            if i > 0 {
+                                self.write(", ");
+                            }
+                            self.fmt_pattern(p);
+                        }
+                        self.write(")");
+                        return;
+                    }
+                    SyntaxKind::L_BRACKET => {
+                        self.write("[");
+                        let mut first_elem = true;
+                        let mut saw_dotdot = false;
+                        for inner in node.children_with_tokens() {
+                            match &inner {
+                                rowan::NodeOrToken::Token(t) => match t.kind() {
+                                    SyntaxKind::DOT_DOT => {
+                                        if !first_elem {
+                                            self.write(", ");
+                                        }
+                                        self.write("..");
+                                        saw_dotdot = true;
+                                        first_elem = false;
+                                    }
+                                    SyntaxKind::IDENT if saw_dotdot => {
+                                        self.write(t.text());
+                                        saw_dotdot = false;
+                                    }
+                                    SyntaxKind::UNDERSCORE if saw_dotdot => {
+                                        self.write("_");
+                                        saw_dotdot = false;
+                                    }
+                                    _ => {}
+                                },
+                                rowan::NodeOrToken::Node(child)
+                                    if child.kind() == SyntaxKind::PATTERN =>
+                                {
+                                    if !first_elem {
+                                        self.write(", ");
+                                    }
+                                    self.fmt_pattern(child);
+                                    first_elem = false;
+                                }
+                                _ => {}
+                            }
+                        }
+                        self.write("]");
+                        return;
+                    }
                     SyntaxKind::L_BRACE => {
                         self.write("{ ");
                         let idents: Vec<_> = node
@@ -255,37 +369,6 @@ impl Formatter<'_> {
                     }
                     _ => {}
                 }
-            }
-        }
-    }
-
-    // ── If ──────────────────────────────────────────────────────
-
-    pub(crate) fn fmt_if(&mut self, node: &SyntaxNode) {
-        self.write("if ");
-
-        let children: Vec<_> = node.children().collect();
-        let mut child_iter = children.iter();
-
-        if let Some(cond) = child_iter.next() {
-            if cond.kind() == SyntaxKind::BLOCK_EXPR {
-                self.fmt_token_expr_after_keyword(node, SyntaxKind::KW_IF);
-                self.write(" ");
-                self.fmt_block(cond);
-            } else {
-                self.fmt_node(cond);
-                self.write(" ");
-                if let Some(then_block) = child_iter.next() {
-                    self.fmt_node(then_block);
-                }
-            }
-        }
-
-        let has_else = self.has_token(node, SyntaxKind::KW_ELSE);
-        if has_else {
-            self.write(" else ");
-            if let Some(else_node) = child_iter.next() {
-                self.fmt_node(else_node);
             }
         }
     }
@@ -375,36 +458,119 @@ impl Formatter<'_> {
     // ── Call ────────────────────────────────────────────────────
 
     pub(crate) fn fmt_call(&mut self, node: &SyntaxNode) {
+        // Format callee, including generic type args like `Array<Todo>(...)`
+        // CST structure: IDENT LESS_THAN TYPE_EXPR* GREATER_THAN L_PAREN ARG* R_PAREN
         let mut wrote_callee = false;
-        for child in node.children() {
-            if child.kind() == SyntaxKind::ARG {
-                break;
+        let mut in_type_args = false;
+        let mut first_type_arg = true;
+
+        for child_or_tok in node.children_with_tokens() {
+            match &child_or_tok {
+                rowan::NodeOrToken::Token(tok) => {
+                    if tok.kind() == SyntaxKind::L_PAREN {
+                        break; // Done with callee, start args
+                    }
+                    if tok.kind().is_trivia() {
+                        continue;
+                    }
+                    if tok.kind() == SyntaxKind::LESS_THAN {
+                        self.write("<");
+                        in_type_args = true;
+                        first_type_arg = true;
+                        wrote_callee = true;
+                        continue;
+                    }
+                    if tok.kind() == SyntaxKind::GREATER_THAN {
+                        self.write(">");
+                        in_type_args = false;
+                        continue;
+                    }
+                    if !wrote_callee {
+                        self.write(tok.text());
+                        wrote_callee = true;
+                    }
+                }
+                rowan::NodeOrToken::Node(child) => {
+                    if child.kind() == SyntaxKind::ARG {
+                        break; // Done with callee
+                    }
+                    if in_type_args && child.kind() == SyntaxKind::TYPE_EXPR {
+                        if !first_type_arg {
+                            self.write(", ");
+                        }
+                        self.fmt_type_expr(child);
+                        first_type_arg = false;
+                    } else if !wrote_callee || !in_type_args {
+                        self.fmt_node(child);
+                        wrote_callee = true;
+                    }
+                }
             }
-            self.fmt_node(&child);
-            wrote_callee = true;
         }
         if !wrote_callee {
             self.fmt_token_callee(node);
         }
 
-        self.write("(");
         let args: Vec<_> = node
             .children()
             .filter(|c| c.kind() == SyntaxKind::ARG)
             .collect();
-        for (i, arg) in args.iter().enumerate() {
-            if i > 0 {
-                self.write(", ");
+
+        // Try inline args
+        let inline = self.try_inline(|f| {
+            f.write("(");
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    f.write(", ");
+                }
+                f.fmt_arg(arg);
             }
-            self.fmt_arg(arg);
+            f.write(")");
+        });
+
+        if self.fits_inline(&inline) {
+            self.write(&inline);
+        } else {
+            // Multi-line args
+            self.write("(");
+            self.indent += 1;
+            for arg in &args {
+                self.newline();
+                self.write_indent();
+                self.fmt_arg(arg);
+                self.write(",");
+            }
+            self.indent -= 1;
+            self.newline();
+            self.write_indent();
+            self.write(")");
         }
-        self.write(")");
     }
 
     pub(crate) fn fmt_arg(&mut self, node: &SyntaxNode) {
         let has_colon = self.has_token(node, SyntaxKind::COLON);
         if has_colon {
-            if let Some(name) = self.first_ident(node) {
+            let name = self.first_ident(node);
+            let value_kind = self.named_arg_value_kind(node);
+
+            // Pun: emit `name:` when value is same identifier as label, or no value at all
+            if let Some(ref label) = name {
+                match &value_kind {
+                    NamedArgValue::Ident(val) if label == val => {
+                        self.write(label);
+                        self.write(":");
+                        return;
+                    }
+                    NamedArgValue::None => {
+                        self.write(label);
+                        self.write(":");
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(name) = name {
                 self.write(&name);
                 self.write(": ");
             }
@@ -436,13 +602,46 @@ impl Formatter<'_> {
         }
     }
 
+    /// Classify the value part of a named arg (after the colon).
+    fn named_arg_value_kind(&self, node: &SyntaxNode) -> NamedArgValue {
+        let mut past_colon = false;
+        for child_or_tok in node.children_with_tokens() {
+            if let Some(tok) = child_or_tok.as_token() {
+                if tok.kind() == SyntaxKind::COLON {
+                    past_colon = true;
+                    continue;
+                }
+                if past_colon && !tok.kind().is_trivia() {
+                    if tok.kind() == SyntaxKind::IDENT {
+                        return NamedArgValue::Ident(tok.text().to_string());
+                    }
+                    return NamedArgValue::Other;
+                }
+            }
+            if child_or_tok.as_node().is_some() && past_colon {
+                return NamedArgValue::Other;
+            }
+        }
+        NamedArgValue::None
+    }
+
     // ── Construct ───────────────────────────────────────────────
 
     pub(crate) fn fmt_construct(&mut self, node: &SyntaxNode) {
-        if let Some(name) = self.first_ident(node) {
-            self.write(&name);
+        // Collect idents before '(' to handle qualified variants: Route.Profile(...)
+        let idents = self.collect_idents_before_lparen(node);
+        if idents.is_empty() {
+            if let Some(name) = self.first_ident(node) {
+                self.write(&name);
+            }
+        } else {
+            for (i, ident) in idents.iter().enumerate() {
+                if i > 0 {
+                    self.write(".");
+                }
+                self.write(ident);
+            }
         }
-        self.write("(");
 
         let spread = node
             .children()
@@ -452,27 +651,75 @@ impl Formatter<'_> {
             .filter(|c| c.kind() == SyntaxKind::ARG)
             .collect();
 
-        let mut first = true;
-        if let Some(spread) = spread {
-            self.write("..");
-            for child in spread.children() {
-                self.fmt_node(&child);
+        // Try inline
+        let inline = self.try_inline(|f| {
+            f.write("(");
+            let mut first = true;
+            if let Some(spread) = &spread {
+                f.fmt_spread(spread);
+                first = false;
             }
-            if spread.children().next().is_none() {
-                self.fmt_tokens_only(&spread);
+            for arg in &args {
+                if !first {
+                    f.write(", ");
+                }
+                f.fmt_arg(arg);
+                first = false;
             }
-            first = false;
-        }
+            f.write(")");
+        });
 
-        for arg in &args {
-            if !first {
-                self.write(", ");
+        if self.fits_inline(&inline) {
+            self.write(&inline);
+        } else {
+            // Multi-line construct
+            self.write("(");
+            self.indent += 1;
+            let mut first = true;
+            if let Some(spread) = &spread {
+                self.newline();
+                self.write_indent();
+                self.fmt_spread(spread);
+                self.write(",");
+                first = false;
             }
-            self.fmt_arg(arg);
-            first = false;
+            for arg in &args {
+                if !first {
+                    // Already wrote comma after previous item
+                }
+                self.newline();
+                self.write_indent();
+                self.fmt_arg(arg);
+                self.write(",");
+                first = false;
+            }
+            self.indent -= 1;
+            self.newline();
+            self.write_indent();
+            self.write(")");
         }
+    }
 
-        self.write(")");
+    fn fmt_spread(&mut self, spread: &SyntaxNode) {
+        self.write("..");
+        if let Some(child) = spread.children().next() {
+            self.fmt_node(&child);
+        } else {
+            // No child node — find ident/token after DOT_DOT
+            let mut past_dots = false;
+            for t in spread.children_with_tokens() {
+                if let Some(tok) = t.as_token() {
+                    if tok.kind() == SyntaxKind::DOT_DOT {
+                        past_dots = true;
+                        continue;
+                    }
+                    if past_dots && !tok.kind().is_trivia() {
+                        self.write(tok.text());
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // ── Member / Index / Unwrap ─────────────────────────────────
@@ -521,21 +768,20 @@ impl Formatter<'_> {
             .filter(|c| c.kind() == SyntaxKind::PARAM)
             .collect();
 
-        // Check if this is a zero-arg lambda (has || token)
-        let has_pipe_pipe = self.has_token(node, SyntaxKind::PIPE_PIPE);
-
-        if has_pipe_pipe && params.is_empty() {
-            self.write("|| ");
-        } else {
-            self.write("|");
-            for (i, param) in params.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.fmt_param(param);
-            }
-            self.write("| ");
+        // Check if this is an async lambda
+        let is_async = self.has_token(node, SyntaxKind::KW_ASYNC);
+        if is_async {
+            self.write("async ");
         }
+
+        self.write("(");
+        for (i, param) in params.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.fmt_param(param);
+        }
+        self.write(") => ");
 
         for child in node.children() {
             if child.kind() != SyntaxKind::PARAM {
@@ -568,6 +814,38 @@ impl Formatter<'_> {
     }
 
     // ── Grouped / Array / Wrapper ───────────────────────────────
+
+    pub(crate) fn fmt_tuple(&mut self, node: &SyntaxNode) {
+        self.write("(");
+        let mut first = true;
+        for child_or_tok in node.children_with_tokens() {
+            match child_or_tok {
+                rowan::NodeOrToken::Node(child) => {
+                    if !first {
+                        self.write(", ");
+                    }
+                    self.fmt_node(&child);
+                    first = false;
+                }
+                rowan::NodeOrToken::Token(tok) => match tok.kind() {
+                    SyntaxKind::NUMBER
+                    | SyntaxKind::STRING
+                    | SyntaxKind::BOOL
+                    | SyntaxKind::IDENT
+                    | SyntaxKind::UNDERSCORE
+                    | SyntaxKind::KW_NONE => {
+                        if !first {
+                            self.write(", ");
+                        }
+                        self.write(tok.text());
+                        first = false;
+                    }
+                    _ => {}
+                },
+            }
+        }
+        self.write(")");
+    }
 
     pub(crate) fn fmt_grouped(&mut self, node: &SyntaxNode) {
         self.write("(");
@@ -610,6 +888,25 @@ impl Formatter<'_> {
             }
         }
         self.write("]");
+    }
+
+    pub(crate) fn fmt_parse_expr(&mut self, node: &SyntaxNode) {
+        self.write("parse<");
+        // Find and format the TYPE_EXPR child
+        for child in node.children() {
+            if child.kind() == SyntaxKind::TYPE_EXPR {
+                self.fmt_node(&child);
+                break;
+            }
+        }
+        self.write(">");
+        // Check if there's a value expression (non-TYPE_EXPR child)
+        let value_child = node.children().find(|c| c.kind() != SyntaxKind::TYPE_EXPR);
+        if let Some(value) = value_child {
+            self.write("(");
+            self.fmt_node(&value);
+            self.write(")");
+        }
     }
 
     pub(crate) fn fmt_wrapper_expr(&mut self, node: &SyntaxNode) {

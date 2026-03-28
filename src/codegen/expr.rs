@@ -1,4 +1,9 @@
 use super::*;
+use super::{ERROR_FIELD, OK_FIELD, TAG_FIELD, VALUE_FIELD};
+
+const DEEP_EQUAL_FN: &str = "__floeEq";
+const THROW_NOT_IMPLEMENTED: &str = "(() => { throw new Error(\"not implemented\"); })()";
+const THROW_UNREACHABLE: &str = "(() => { throw new Error(\"unreachable\"); })()";
 
 impl Codegen {
     // ── Expressions ──────────────────────────────────────────────
@@ -25,9 +30,18 @@ impl Codegen {
             ExprKind::Identifier(name) => {
                 if self.unit_variants.contains(name.as_str()) {
                     // Zero-arg union variant: `All` → `{ tag: "All" }`
-                    self.push("{ tag: \"");
+                    self.push(&format!("{{ {TAG_FIELD}: \""));
                     self.push(name);
                     self.push("\" }");
+                } else if let Some(field_names) = self
+                    .variant_info
+                    .get(name.as_str())
+                    .filter(|(_, f)| !f.is_empty())
+                    .map(|(_, f)| f.clone())
+                {
+                    // Non-unit variant as function value:
+                    // `Validation` → `(value) => ({ tag: "Validation", value })`
+                    self.emit_variant_constructor_fn(name, &field_names);
                 } else {
                     self.push(name);
                 }
@@ -37,7 +51,7 @@ impl Codegen {
             ExprKind::Binary { left, op, right } => match op {
                 BinOp::Eq => {
                     self.needs_deep_equal = true;
-                    self.push("__zenEq(");
+                    self.push(&format!("{DEEP_EQUAL_FN}("));
                     self.emit_expr(left);
                     self.push(", ");
                     self.emit_expr(right);
@@ -45,7 +59,7 @@ impl Codegen {
                 }
                 BinOp::NotEq => {
                     self.needs_deep_equal = true;
-                    self.push("!__zenEq(");
+                    self.push(&format!("!{DEEP_EQUAL_FN}("));
                     self.emit_expr(left);
                     self.push(", ");
                     self.emit_expr(right);
@@ -69,17 +83,18 @@ impl Codegen {
                 self.emit_pipe(left, right);
             }
 
-            // Unwrap: `expr?` → early return pattern
-            // In expression context, we emit as inline (the statement-level
-            // version with temp vars is handled at block level)
+            // Unwrap: `expr?` → inline Result unwrap via IIFE
             ExprKind::Unwrap(inner) => {
-                // Simple inline unwrap — the full temp var version needs
-                // statement context. For now emit as-is for nested expressions.
+                // Emit as IIFE that checks .ok and either returns value or throws
+                // Use 'ok' in __r check to distinguish Floe Results from HTTP Response
+                self.push("(() => { const __r = ");
                 self.emit_expr(inner);
-                self.push("!");
+                self.push(
+                    "; if (typeof __r === 'object' && __r !== null && 'ok' in __r && typeof __r.ok === 'boolean') { if (!__r.ok) throw __r.error; return __r.value; } return __r; })()",
+                );
             }
 
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call { callee, args, .. } => {
                 // Check for stdlib call: Array.sort(arr), Option.map(opt, fn), etc.
                 if let Some(output) = self.try_emit_stdlib_call(callee, args) {
                     self.push(&output);
@@ -96,19 +111,55 @@ impl Codegen {
 
             // Constructor: `User(name: "Ry", email: e)` → `{ name: "Ry", email: e }`
             // Union variant: `Valid(text)` → `{ tag: "Valid", text: text }`
+            // npm constructor: `QueryClient({...})` → `new QueryClient({...})`
             ExprKind::Construct {
                 type_name,
                 spread,
                 args,
             } => {
+                // Qualified non-unit variant with no args → function value
+                // `SaveError.Validation` → `(value) => ({ tag: "Validation", value })`
+                if args.is_empty()
+                    && spread.is_none()
+                    && let Some(field_names) = self
+                        .variant_info
+                        .get(type_name.as_str())
+                        .filter(|(_, f)| !f.is_empty())
+                        .map(|(_, f)| f.clone())
+                {
+                    self.emit_variant_constructor_fn(type_name, &field_names);
+                    return;
+                }
+
                 let variant_field_names = self
                     .variant_info
                     .get(type_name.as_str())
                     .map(|(_, fields)| fields.clone());
                 let is_variant = variant_field_names.is_some();
+
+                // Floe constructors use named args: User(name: "x", age: 30)
+                // npm constructor calls use positional args: QueryClient({...})
+                // If all args are positional (no named args), emit as `new Name(args)`
+                let has_named_args = args.iter().any(|a| matches!(a, Arg::Named { .. }));
+                if !is_variant && !has_named_args && spread.is_none() {
+                    self.push("new ");
+                    self.push(type_name);
+                    self.push("(");
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            self.push(", ");
+                        }
+                        if let Arg::Positional(e) = arg {
+                            self.emit_expr(e);
+                        }
+                    }
+                    self.push(")");
+                    return;
+                }
+
                 self.push("{ ");
                 if is_variant {
-                    self.push("tag: \"");
+                    self.push(&format!("{TAG_FIELD}: \""));
                     self.push(type_name);
                     self.push("\"");
                     if !args.is_empty() || spread.is_some() {
@@ -132,9 +183,27 @@ impl Codegen {
             }
 
             ExprKind::Member { object, field } => {
-                self.emit_expr(object);
-                self.push(".");
-                self.push(field);
+                // Check for union variant access: `Filter.All` → `{ tag: "All" }`
+                if let ExprKind::Identifier(type_name) = &object.kind
+                    && self
+                        .variant_info
+                        .get(field.as_str())
+                        .is_some_and(|(union_name, _)| union_name == type_name)
+                {
+                    self.push(&format!("{{ {TAG_FIELD}: \""));
+                    self.push(field);
+                    self.push("\" }");
+                } else if field.chars().all(|c| c.is_ascii_digit()) {
+                    // Tuple index access: pair.0 → pair[0]
+                    self.emit_expr(object);
+                    self.push("[");
+                    self.push(field);
+                    self.push("]");
+                } else {
+                    self.emit_expr(object);
+                    self.push(".");
+                    self.push(field);
+                }
             }
 
             ExprKind::Index { object, index } => {
@@ -144,10 +213,17 @@ impl Codegen {
                 self.push("]");
             }
 
-            ExprKind::Arrow { params, body } => {
+            ExprKind::Arrow {
+                async_fn,
+                params,
+                body,
+            } => {
+                if *async_fn {
+                    self.push("async ");
+                }
                 if params.len() == 1 && params[0].type_ann.is_none() {
                     self.push("(");
-                    self.push(&params[0].name);
+                    self.emit_param(&params[0]);
                     self.push(")");
                 } else {
                     self.push("(");
@@ -155,7 +231,17 @@ impl Codegen {
                     self.push(")");
                 }
                 self.push(" => ");
+                // Wrap object-like bodies in parens to avoid block statement ambiguity
+                // e.g. (p) => ({ id: p.id }) not (p) => { id: p.id }
+                let needs_parens =
+                    matches!(body.kind, ExprKind::Construct { .. } | ExprKind::Object(_));
+                if needs_parens {
+                    self.push("(");
+                }
                 self.emit_expr(body);
+                if needs_parens {
+                    self.push(")");
+                }
             }
 
             // Match: `match x { A -> ..., B -> ... }` → ternary chain
@@ -163,45 +249,41 @@ impl Codegen {
                 self.emit_match(subject, arms);
             }
 
-            ExprKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.emit_expr(condition);
-                self.push(" ? ");
-                self.emit_expr(then_branch);
-                self.push(" : ");
-                if let Some(else_expr) = else_branch {
-                    self.emit_expr(else_expr);
-                } else {
-                    self.push("undefined");
-                }
-            }
-
-            ExprKind::Return(value) => {
-                self.push("return");
-                if let Some(v) = value {
-                    self.push(" ");
-                    self.emit_expr(v);
-                }
-            }
-
             ExprKind::Await(inner) => {
                 self.push("await ");
                 self.emit_expr(inner);
             }
 
+            // Try: `try expr` → IIFE with try/catch wrapping in Result
+            // Non-Error throws are coerced to Error for consistent typing
+            ExprKind::Try(inner) => {
+                let has_await = expr_contains_await(inner);
+                if has_await {
+                    self.push(&format!("await (async () => {{ try {{ return {{ {OK_FIELD}: true as const, {VALUE_FIELD}: "));
+                } else {
+                    self.push(&format!(
+                        "(() => {{ try {{ return {{ {OK_FIELD}: true as const, {VALUE_FIELD}: "
+                    ));
+                }
+                self.emit_expr(inner);
+                self.push(&format!(" }}; }} catch (_e) {{ return {{ {OK_FIELD}: false as const, {ERROR_FIELD}: _e instanceof Error ? _e : new Error(String(_e)) }}; }} }})()"));
+            }
+
+            // parse<T>(value) → validation IIFE
+            ExprKind::Parse { type_arg, value } => {
+                self.emit_parse(type_arg, value);
+            }
+
             // Ok(value) → { ok: true, value: value }
             ExprKind::Ok(inner) => {
-                self.push("{ ok: true as const, value: ");
+                self.push(&format!("{{ {OK_FIELD}: true as const, {VALUE_FIELD}: "));
                 self.emit_expr(inner);
                 self.push(" }");
             }
 
             // Err(error) → { ok: false, error: error }
             ExprKind::Err(inner) => {
-                self.push("{ ok: false as const, error: ");
+                self.push(&format!("{{ {OK_FIELD}: false as const, {ERROR_FIELD}: "));
                 self.emit_expr(inner);
                 self.push(" }");
             }
@@ -216,6 +298,16 @@ impl Codegen {
                 self.push("undefined");
             }
 
+            // todo → throw new Error("not implemented")
+            ExprKind::Todo => {
+                self.push(THROW_NOT_IMPLEMENTED);
+            }
+
+            // unreachable → throw new Error("unreachable")
+            ExprKind::Unreachable => {
+                self.push(THROW_UNREACHABLE);
+            }
+
             ExprKind::Unit => {
                 self.push("undefined");
             }
@@ -223,6 +315,10 @@ impl Codegen {
             ExprKind::Jsx(element) => {
                 self.has_jsx = true;
                 self.emit_jsx(element);
+            }
+
+            ExprKind::Collect(items) => {
+                self.emit_collect_block(items);
             }
 
             ExprKind::Block(items) => {
@@ -246,11 +342,107 @@ impl Codegen {
                 self.push("]");
             }
 
+            ExprKind::Tuple(elements) => {
+                // Tuple: (a, b) → [a, b] as const
+                self.push("[");
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        self.push(", ");
+                    }
+                    self.emit_expr(elem);
+                }
+                self.push("]");
+            }
+
             ExprKind::Spread(inner) => {
                 self.push("...");
                 self.emit_expr(inner);
             }
+
+            ExprKind::Object(fields) => {
+                self.push("{ ");
+                for (i, (key, value)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        self.push(", ");
+                    }
+                    self.push(key);
+                    self.push(": ");
+                    self.emit_expr(value);
+                }
+                self.push(" }");
+            }
+
+            ExprKind::DotShorthand { field, predicate } => {
+                match predicate {
+                    Some((op, rhs)) => match op {
+                        BinOp::Eq => {
+                            self.needs_deep_equal = true;
+                            self.push(&format!("(_x) => {DEEP_EQUAL_FN}(_x."));
+                            self.push(field);
+                            self.push(", ");
+                            self.emit_expr(rhs);
+                            self.push(")");
+                        }
+                        BinOp::NotEq => {
+                            self.needs_deep_equal = true;
+                            self.push(&format!("(_x) => !{DEEP_EQUAL_FN}(_x."));
+                            self.push(field);
+                            self.push(", ");
+                            self.emit_expr(rhs);
+                            self.push(")");
+                        }
+                        _ => {
+                            self.push("(_x) => _x.");
+                            self.push(field);
+                            self.push(&format!(" {} ", binop_str(*op)));
+                            self.emit_expr(rhs);
+                        }
+                    },
+                    None => {
+                        // `.field` → `(_x) => _x.field`
+                        self.push("(_x) => _x.");
+                        self.push(field);
+                    }
+                }
+            }
         }
+    }
+
+    // ── Stdlib Helpers ─────────────────────────────────────────
+
+    /// Emit each argument via a sub-codegen, propagating `needs_deep_equal`, and collect output strings.
+    fn emit_arg_strings(&mut self, args: &[Arg]) -> Vec<String> {
+        let mut arg_strings = Vec::new();
+        for arg in args {
+            let mut sub = self.sub_codegen();
+            match arg {
+                Arg::Positional(e) => sub.emit_expr(e),
+                Arg::Named { value, .. } => sub.emit_expr(value),
+            }
+            if sub.needs_deep_equal {
+                self.needs_deep_equal = true;
+            }
+            arg_strings.push(sub.output);
+        }
+        arg_strings
+    }
+
+    /// Emit a single expression via a sub-codegen, propagating `needs_deep_equal`.
+    fn emit_expr_string(&mut self, expr: &Expr) -> String {
+        let mut sub = self.sub_codegen();
+        sub.emit_expr(expr);
+        if sub.needs_deep_equal {
+            self.needs_deep_equal = true;
+        }
+        sub.output
+    }
+
+    /// Check a stdlib template for deep-equal usage and expand it with the given arg strings.
+    fn apply_stdlib_template(&mut self, template: &str, arg_strings: &[String]) -> String {
+        if template.contains(DEEP_EQUAL_FN) {
+            self.needs_deep_equal = true;
+        }
+        expand_codegen_template(template, arg_strings)
     }
 
     // ── Pipe Lowering ────────────────────────────────────────────
@@ -262,25 +454,8 @@ impl Codegen {
             && let Some(stdlib_fn) = self.stdlib.lookup(module, field)
         {
             let template = stdlib_fn.codegen.to_string();
-            if template.contains("__zenEq") {
-                self.needs_deep_equal = true;
-            }
-
-            // Collect emitted args using sub-codegen that shares state
-            let mut arg_strings = Vec::new();
-            for arg in args {
-                let mut sub = self.sub_codegen();
-                match arg {
-                    Arg::Positional(e) => sub.emit_expr(e),
-                    Arg::Named { value, .. } => sub.emit_expr(value),
-                }
-                if sub.needs_deep_equal {
-                    self.needs_deep_equal = true;
-                }
-                arg_strings.push(sub.output);
-            }
-
-            Some(expand_codegen_template(&template, &arg_strings))
+            let arg_strings = self.emit_arg_strings(args);
+            Some(self.apply_stdlib_template(&template, &arg_strings))
         } else {
             None
         }
@@ -298,47 +473,99 @@ impl Codegen {
             && let Some(stdlib_fn) = self.stdlib.lookup(module, field)
         {
             let template = stdlib_fn.codegen.to_string();
-            if template.contains("__zenEq") {
-                self.needs_deep_equal = true;
-            }
-
-            // First arg is the piped value
-            let mut sub = self.sub_codegen();
-            sub.emit_expr(left);
-            if sub.needs_deep_equal {
-                self.needs_deep_equal = true;
-            }
-            let mut arg_strings = vec![sub.output];
-
-            // Remaining args
-            for arg in extra_args {
-                let mut sub = self.sub_codegen();
-                match arg {
-                    Arg::Positional(e) => sub.emit_expr(e),
-                    Arg::Named { value, .. } => sub.emit_expr(value),
-                }
-                if sub.needs_deep_equal {
-                    self.needs_deep_equal = true;
-                }
-                arg_strings.push(sub.output);
-            }
-
-            Some(expand_codegen_template(&template, &arg_strings))
+            let left_str = self.emit_expr_string(left);
+            let mut arg_strings = vec![left_str];
+            arg_strings.extend(self.emit_arg_strings(extra_args));
+            Some(self.apply_stdlib_template(&template, &arg_strings))
         } else {
             None
         }
     }
 
-    fn emit_pipe(&mut self, left: &Expr, right: &Expr) {
+    /// Try to resolve a bare function name in pipe context via type-directed stdlib lookup.
+    /// Uses the checker's type map to determine which stdlib module to use.
+    /// e.g., `arr |> length` → left is Array → use Array.length template.
+    fn try_emit_bare_stdlib_pipe(
+        &mut self,
+        left: &Expr,
+        callee: &Expr,
+        extra_args: &[Arg],
+    ) -> Option<String> {
+        if let ExprKind::Identifier(name) = &callee.kind {
+            // Don't shadow locally defined functions, unless the name
+            // is also a stdlib function (stdlib takes priority in pipes)
+            if self.local_names.contains(name.as_str())
+                && self.stdlib.lookup_by_name(name).is_empty()
+            {
+                return None;
+            }
+
+            // Resolve stdlib module from the left-hand type.
+            // 1. Known type → type-directed (disambiguates Array.length vs String.length)
+            // 2. Unknown/Var type or no entry → name-based fallback
+            let stdlib_fn = match self
+                .expr_types
+                .get(&(left.span.start, left.span.end))
+                .and_then(|ty| Self::type_to_stdlib_module(ty))
+            {
+                Some(module) => self
+                    .stdlib
+                    .lookup(module, name)
+                    // Fallback: name might be in a different module (e.g. tap is in Pipe, not Array)
+                    .or_else(|| self.stdlib.lookup_by_name(name).into_iter().next()),
+                None => self.stdlib.lookup_by_name(name).into_iter().next(),
+            }?;
+
+            let template = stdlib_fn.codegen.to_string();
+            let left_str = self.emit_expr_string(left);
+            let mut arg_strings = vec![left_str];
+            arg_strings.extend(self.emit_arg_strings(extra_args));
+            return Some(self.apply_stdlib_template(&template, &arg_strings));
+        }
+        None
+    }
+
+    /// Map a checker Type to the corresponding stdlib module name.
+    fn type_to_stdlib_module(ty: &crate::checker::Type) -> Option<&'static str> {
+        use crate::checker::Type;
+        match ty {
+            Type::Array(_) => Some("Array"),
+            Type::Map { .. } => Some("Map"),
+            Type::Set { .. } => Some("Set"),
+            Type::String => Some("String"),
+            Type::Number => Some("Number"),
+            Type::Option(_) => Some("Option"),
+            Type::Result { .. } => Some("Result"),
+            _ => None,
+        }
+    }
+
+    pub(super) fn emit_pipe(&mut self, left: &Expr, right: &Expr) {
         match &right.kind {
             // Stdlib pipe: `arr |> Array.sort` or `arr |> Array.map(fn)`
-            ExprKind::Call { callee, args } if !has_placeholder_arg(args) => {
+            // Also handles type-directed resolution: `arr |> map(fn)` → stdlib lookup by name
+            ExprKind::Call { callee, args, .. } if !has_placeholder_arg(args) => {
                 if let Some(output) = self.try_emit_stdlib_pipe(left, callee, args) {
                     self.push(&output);
                     return;
                 }
+                // Type-directed resolution: bare function name → check stdlib
+                if let Some(output) = self.try_emit_bare_stdlib_pipe(left, callee, args) {
+                    self.push(&output);
+                    return;
+                }
                 // Fall through to normal call handling below
-                self.emit_expr(callee);
+                // Use aliased import name if available (avoids TDZ conflicts)
+                let callee_alias = if let ExprKind::Identifier(name) = &callee.kind {
+                    self.import_aliases.get(name.as_str()).cloned()
+                } else {
+                    None
+                };
+                if let Some(alias) = callee_alias {
+                    self.push(&alias);
+                } else {
+                    self.emit_expr(callee);
+                }
                 self.push("(");
                 self.emit_expr(left);
                 if !args.is_empty() {
@@ -360,7 +587,7 @@ impl Codegen {
                 self.push(")");
             }
             // `a |> f(b, _, c)` → `f(b, a, c)` — placeholder replacement
-            ExprKind::Call { callee, args } if has_placeholder_arg(args) => {
+            ExprKind::Call { callee, args, .. } if has_placeholder_arg(args) => {
                 self.emit_expr(callee);
                 self.push("(");
                 for (i, arg) in args.iter().enumerate() {
@@ -385,9 +612,30 @@ impl Codegen {
                 }
                 self.push(")");
             }
-            // `a |> f` → `f(a)` — bare function
-            ExprKind::Identifier(_) => {
-                self.emit_expr(right);
+            // `a |> parse<T>` — substitute piped value into parse
+            ExprKind::Parse { type_arg, value } if matches!(value.kind, ExprKind::Placeholder) => {
+                let substituted = Expr {
+                    kind: ExprKind::Parse {
+                        type_arg: type_arg.clone(),
+                        value: Box::new(left.clone()),
+                    },
+                    span: right.span,
+                };
+                self.emit_expr(&substituted);
+            }
+            // `a |> f` → `f(a)` — bare function (also check stdlib)
+            ExprKind::Identifier(name) => {
+                if let Some(output) = self.try_emit_bare_stdlib_pipe(left, right, &[]) {
+                    self.push(&output);
+                    return;
+                }
+                // Use aliased import name if available (avoids TDZ conflicts)
+                let alias = self.import_aliases.get(name.as_str()).cloned();
+                if let Some(alias) = alias {
+                    self.push(&alias);
+                } else {
+                    self.emit_expr(right);
+                }
                 self.push("(");
                 self.emit_expr(left);
                 self.push(")");
@@ -433,6 +681,26 @@ impl Codegen {
 
     // ── Constructor → Object Literal ─────────────────────────────
 
+    /// Emit a variant constructor as an arrow function.
+    /// `Validation` → `(value) => ({ tag: "Validation", value })`
+    fn emit_variant_constructor_fn(&mut self, variant_name: &str, field_names: &[String]) {
+        self.push("(");
+        for (i, fname) in field_names.iter().enumerate() {
+            if i > 0 {
+                self.push(", ");
+            }
+            self.push(fname);
+        }
+        self.push(&format!(") => ({{ {TAG_FIELD}: \""));
+        self.push(variant_name);
+        self.push("\"");
+        for fname in field_names {
+            self.push(", ");
+            self.push(fname);
+        }
+        self.push(" })");
+    }
+
     /// Emit construct fields, mapping positional args to field names from the type definition.
     fn emit_construct_fields(&mut self, args: &[Arg], field_names: &[String]) {
         for (i, arg) in args.iter().enumerate() {
@@ -477,6 +745,146 @@ impl Codegen {
         }
     }
 
+    // ── Parse<T> Validation Codegen ─────────────────────────────
+
+    fn emit_parse(&mut self, type_arg: &TypeExpr, value: &Expr) {
+        // Generate: (() => { const __v = <value>; <checks>; return { ok: true, value: __v as T }; })()
+        self.push("(() => { const __v = ");
+        self.emit_expr(value);
+        self.push("; ");
+        self.emit_parse_checks("__v", type_arg, "");
+        self.push(&format!(
+            "return {{ {OK_FIELD}: true as const, {VALUE_FIELD}: __v as "
+        ));
+        self.emit_type_expr(type_arg);
+        self.push(" }; })()");
+    }
+
+    /// Emit validation checks for a given accessor path against a type expression.
+    /// `accessor` is the JS expression to check (e.g., "__v", "(__v as any).name").
+    /// `path` is a human-readable path for error messages (e.g., "", "field 'name'").
+    fn emit_parse_checks(&mut self, accessor: &str, type_expr: &TypeExpr, path: &str) {
+        match &type_expr.kind {
+            TypeExprKind::Named {
+                name, type_args, ..
+            } => {
+                match name.as_str() {
+                    "string" => {
+                        self.emit_typeof_check(accessor, "string", path);
+                    }
+                    "number" => {
+                        self.emit_typeof_check(accessor, "number", path);
+                    }
+                    "boolean" => {
+                        self.emit_typeof_check(accessor, "boolean", path);
+                    }
+                    "Array" => {
+                        // Array.isArray check + element validation
+                        let err_prefix = if path.is_empty() {
+                            String::new()
+                        } else {
+                            format!("{path}: ")
+                        };
+                        self.push(&format!(
+                            "if (!Array.isArray({accessor})) return {{ {OK_FIELD}: false as const, {ERROR_FIELD}: new Error(\"{err_prefix}expected array, got \" + typeof {accessor}) }}; "
+                        ));
+                        if let Some(elem_type) = type_args.first() {
+                            let idx_var = format!("__i{}", accessor.len());
+                            let elem_accessor = format!("{accessor}[{idx_var}]");
+                            let elem_path = if path.is_empty() {
+                                format!("element [\" + {idx_var} + \"]")
+                            } else {
+                                format!("{path} element [\" + {idx_var} + \"]")
+                            };
+                            self.push(&format!(
+                                "for (let {idx_var} = 0; {idx_var} < {accessor}.length; {idx_var}++) {{ "
+                            ));
+                            self.emit_parse_checks(&elem_accessor, elem_type, &elem_path);
+                            self.push("} ");
+                        }
+                    }
+                    "Option" => {
+                        // Allow undefined or validate inner type
+                        if let Some(inner_type) = type_args.first() {
+                            self.push(&format!("if ({accessor} !== undefined) {{ "));
+                            self.emit_parse_checks(accessor, inner_type, path);
+                            self.push("} ");
+                        }
+                    }
+                    _ => {
+                        // Named type — look up in expr_types to find if it's a known record.
+                        // For now, just check it's an object (non-null).
+                        let err_prefix = if path.is_empty() {
+                            String::new()
+                        } else {
+                            format!("{path}: ")
+                        };
+                        self.push(&format!(
+                            "if (typeof {accessor} !== \"object\" || {accessor} === null) return {{ {OK_FIELD}: false as const, {ERROR_FIELD}: new Error(\"{err_prefix}expected object, got \" + typeof {accessor}) }}; "
+                        ));
+                    }
+                }
+            }
+            TypeExprKind::Record(fields) => {
+                // Check it's an object
+                let err_prefix = if path.is_empty() {
+                    String::new()
+                } else {
+                    format!("{path}: ")
+                };
+                self.push(&format!(
+                    "if (typeof {accessor} !== \"object\" || {accessor} === null) return {{ {OK_FIELD}: false as const, {ERROR_FIELD}: new Error(\"{err_prefix}expected object, got \" + typeof {accessor}) }}; "
+                ));
+                // Check each field
+                for field in fields {
+                    let field_accessor = format!("({accessor} as any).{}", field.name);
+                    let field_path = if path.is_empty() {
+                        format!("field '{}'", field.name)
+                    } else {
+                        format!("{path}.{}", field.name)
+                    };
+                    self.emit_parse_checks(&field_accessor, &field.type_ann, &field_path);
+                }
+            }
+            TypeExprKind::Array(inner) => {
+                let err_prefix = if path.is_empty() {
+                    String::new()
+                } else {
+                    format!("{path}: ")
+                };
+                self.push(&format!(
+                    "if (!Array.isArray({accessor})) return {{ {OK_FIELD}: false as const, {ERROR_FIELD}: new Error(\"{err_prefix}expected array, got \" + typeof {accessor}) }}; "
+                ));
+                let idx_var = format!("__i{}", accessor.len());
+                let elem_accessor = format!("{accessor}[{idx_var}]");
+                let elem_path = if path.is_empty() {
+                    format!("element [\" + {idx_var} + \"]")
+                } else {
+                    format!("{path} element [\" + {idx_var} + \"]")
+                };
+                self.push(&format!(
+                    "for (let {idx_var} = 0; {idx_var} < {accessor}.length; {idx_var}++) {{ "
+                ));
+                self.emit_parse_checks(&elem_accessor, inner, &elem_path);
+                self.push("} ");
+            }
+            TypeExprKind::Function { .. } | TypeExprKind::Tuple(_) => {
+                // Can't validate functions or tuples at runtime — skip
+            }
+        }
+    }
+
+    fn emit_typeof_check(&mut self, accessor: &str, expected: &str, path: &str) {
+        let err_prefix = if path.is_empty() {
+            String::new()
+        } else {
+            format!("{path}: ")
+        };
+        self.push(&format!(
+            "if (typeof {accessor} !== \"{expected}\") return {{ {OK_FIELD}: false as const, {ERROR_FIELD}: new Error(\"{err_prefix}expected {expected}, got \" + typeof {accessor}) }}; "
+        ));
+    }
+
     // ── Arguments (labels erased) ────────────────────────────────
 
     fn emit_args(&mut self, args: &[Arg]) {
@@ -503,10 +911,7 @@ impl Codegen {
                 self.indent += 1;
                 for (i, item) in items.iter().enumerate() {
                     let is_last = i == items.len() - 1;
-                    if is_last
-                        && matches!(item.kind, ItemKind::Expr(_))
-                        && !self.item_has_return(item)
-                    {
+                    if is_last && matches!(item.kind, ItemKind::Expr(_)) {
                         self.emit_indent();
                         self.push("return ");
                         if let ItemKind::Expr(e) = &item.kind {
@@ -527,9 +932,7 @@ impl Codegen {
                 self.newline();
                 self.indent += 1;
                 self.emit_indent();
-                if !matches!(expr.kind, ExprKind::Return(_)) {
-                    self.push("return ");
-                }
+                self.push("return ");
                 self.emit_expr(expr);
                 self.push(";");
                 self.newline();
@@ -538,11 +941,6 @@ impl Codegen {
                 self.push("}");
             }
         }
-    }
-
-    /// Check if an item already contains an explicit return.
-    fn item_has_return(&self, item: &Item) -> bool {
-        matches!(&item.kind, ItemKind::Expr(e) if matches!(e.kind, ExprKind::Return(_)))
     }
 
     pub(super) fn emit_block_expr(&mut self, expr: &Expr) {
@@ -576,5 +974,194 @@ impl Codegen {
         self.indent -= 1;
         self.emit_indent();
         self.push("}");
+    }
+
+    // ── Collect Block ───────────────────────────────────────────
+
+    /// Emit a collect block as an IIFE that accumulates errors from `?`.
+    ///
+    /// ```typescript
+    /// (() => {
+    ///     const __errors: Array<E> = [];
+    ///     const _r0 = validateName(input.name);
+    ///     if (!_r0.ok) __errors.push(_r0.error);
+    ///     const name = _r0.ok ? _r0.value : undefined as any;
+    ///     ...
+    ///     if (__errors.length > 0) return { ok: false, error: __errors };
+    ///     return { ok: true, value: <last_expr> };
+    /// })()
+    /// ```
+    fn emit_collect_block(&mut self, items: &[Item]) {
+        // Check if any item contains await — if so, emit async IIFE
+        let has_await = items.iter().any(|item| match &item.kind {
+            ItemKind::Expr(e) => expr_contains_await(e),
+            ItemKind::Const(c) => expr_contains_await(&c.value),
+            _ => false,
+        });
+        if has_await {
+            self.push("(async () => {");
+        } else {
+            self.push("(() => {");
+        }
+        self.newline();
+        self.indent += 1;
+
+        // Emit error accumulator
+        self.emit_indent();
+        self.push("const __errors: Array<any> = [];");
+        self.newline();
+
+        let mut result_counter = 0;
+
+        for (i, item) in items.iter().enumerate() {
+            let is_last = i == items.len() - 1;
+            if is_last {
+                if let ItemKind::Expr(expr) = &item.kind {
+                    // Check for errors before returning
+                    self.emit_indent();
+                    self.push(
+                        "if (__errors.length > 0) return { ok: false as const, error: __errors };",
+                    );
+                    self.newline();
+                    self.emit_indent();
+                    self.push("return { ok: true as const, value: ");
+                    self.emit_expr(expr);
+                    self.push(" };");
+                    self.newline();
+                } else {
+                    self.emit_collect_item(item, &mut result_counter);
+                    self.emit_indent();
+                    self.push(
+                        "if (__errors.length > 0) return { ok: false as const, error: __errors };",
+                    );
+                    self.newline();
+                    self.emit_indent();
+                    self.push("return { ok: true as const, value: undefined };");
+                    self.newline();
+                }
+            } else {
+                self.emit_collect_item(item, &mut result_counter);
+            }
+        }
+
+        self.indent -= 1;
+        self.emit_indent();
+        self.push("})()");
+    }
+
+    /// Emit an item inside a collect block.
+    /// Const declarations with `?` get special treatment:
+    /// instead of short-circuiting, we accumulate the error.
+    fn emit_collect_item(&mut self, item: &Item, result_counter: &mut usize) {
+        match &item.kind {
+            ItemKind::Const(decl) => {
+                if let Some(unwrap_inner) = Self::find_unwrap_in_expr(&decl.value) {
+                    let idx = *result_counter;
+                    *result_counter += 1;
+                    let temp = format!("_r{idx}");
+
+                    // const _rN = <inner expression before ?>
+                    self.emit_indent();
+                    self.push(&format!("const {temp} = "));
+                    self.emit_expr(unwrap_inner);
+                    self.push(";");
+                    self.newline();
+
+                    // if (!_rN.ok) __errors.push(_rN.error);
+                    self.emit_indent();
+                    self.push(&format!("if (!{temp}.ok) __errors.push({temp}.error);"));
+                    self.newline();
+
+                    // const <binding> = _rN.ok ? _rN.value : undefined as any;
+                    self.emit_indent();
+                    match &decl.binding {
+                        ConstBinding::Name(name) => {
+                            self.push(&format!(
+                                "const {name} = {temp}.ok ? {temp}.value : undefined as any;"
+                            ));
+                        }
+                        _ => {
+                            // For destructured bindings, fall back to normal emit
+                            self.push(&format!(
+                                "const __v{idx} = {temp}.ok ? {temp}.value : undefined as any;"
+                            ));
+                        }
+                    }
+                    self.newline();
+                } else {
+                    // No unwrap — emit normally
+                    self.emit_item(item);
+                    self.newline();
+                }
+            }
+            ItemKind::Expr(expr) => {
+                // Check if the expression itself is an unwrap
+                if let ExprKind::Unwrap(inner) = &expr.kind {
+                    let idx = *result_counter;
+                    *result_counter += 1;
+                    let temp = format!("_r{idx}");
+
+                    self.emit_indent();
+                    self.push(&format!("const {temp} = "));
+                    self.emit_expr(inner);
+                    self.push(";");
+                    self.newline();
+
+                    self.emit_indent();
+                    self.push(&format!("if (!{temp}.ok) __errors.push({temp}.error);"));
+                    self.newline();
+                } else {
+                    self.emit_indent();
+                    self.emit_expr(expr);
+                    self.push(";");
+                    self.newline();
+                }
+            }
+            _ => {
+                self.emit_item(item);
+                self.newline();
+            }
+        }
+    }
+
+    /// Find the inner expression of the outermost `?` in an expression.
+    /// For example, in `input.name |> validateName?`, the parser produces
+    /// `Unwrap(Pipe { ... })`, and this returns the `Pipe` expression.
+    pub fn find_unwrap_in_expr(expr: &Expr) -> Option<&Expr> {
+        match &expr.kind {
+            ExprKind::Unwrap(inner) => Some(inner),
+            _ => None,
+        }
+    }
+}
+
+/// Check if an expression tree contains an Await node.
+fn expr_contains_await(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Await(_) => true,
+        ExprKind::Call { callee, args, .. } => {
+            expr_contains_await(callee)
+                || args.iter().any(|a| match a {
+                    Arg::Positional(e) | Arg::Named { value: e, .. } => expr_contains_await(e),
+                })
+        }
+        ExprKind::Member { object, .. } => expr_contains_await(object),
+        ExprKind::Pipe { left, right } => expr_contains_await(left) || expr_contains_await(right),
+        ExprKind::Binary { left, right, .. } => {
+            expr_contains_await(left) || expr_contains_await(right)
+        }
+        ExprKind::Unary { operand, .. }
+        | ExprKind::Grouped(operand)
+        | ExprKind::Unwrap(operand)
+        | ExprKind::Try(operand)
+        | ExprKind::Spread(operand) => expr_contains_await(operand),
+        ExprKind::Collect(items) | ExprKind::Block(items) => items.iter().any(|item| {
+            if let ItemKind::Expr(e) = &item.kind {
+                expr_contains_await(e)
+            } else {
+                false
+            }
+        }),
+        _ => false,
     }
 }

@@ -3,6 +3,7 @@
 //! Each test reads a .fl fixture file, parses + codegen, and compares
 //! against an insta snapshot. Run `cargo insta review` to accept new snapshots.
 
+use floe::checker::Checker;
 use floe::codegen::Codegen;
 use floe::parser::Parser;
 
@@ -10,7 +11,8 @@ fn compile(source: &str) -> String {
     let program = Parser::new(source)
         .parse_program()
         .expect("fixture should parse");
-    Codegen::new().generate(&program).code
+    let (_, expr_types) = Checker::new().check_full(&program);
+    Codegen::with_expr_types(expr_types).generate(&program).code
 }
 
 fn compile_fixture(name: &str) -> String {
@@ -95,5 +97,83 @@ fn snapshot_structural_equality() {
 #[test]
 fn snapshot_stdlib() {
     let output = compile_fixture("stdlib");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_dot_shorthand() {
+    let output = compile_fixture("dot_shorthand");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_for_blocks() {
+    let output = compile_fixture("for_blocks");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_try_expr() {
+    let output = compile_fixture("try_expr");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_trusted_import() {
+    let output = compile_fixture("trusted_import");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_traits() {
+    let output = compile_fixture("traits");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_tuples() {
+    let output = compile_fixture("tuples");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_string_patterns() {
+    let output = compile_fixture("string_patterns");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_todo_unreachable() {
+    let output = compile_fixture("todo_unreachable");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_record_spread() {
+    let output = compile_fixture("record_spread");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_array_patterns() {
+    let output = compile_fixture("array_patterns");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_collect() {
+    let output = compile_fixture("collect");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_deriving() {
+    let output = compile_fixture("deriving");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_pipe_unwrap() {
+    let output = compile_fixture("pipe_unwrap");
     insta::assert_snapshot!(output);
 }

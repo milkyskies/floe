@@ -1,16 +1,32 @@
-type Todo = {
+export type Todo {
     id: string,
     text: string,
-    done: bool,
+    done: boolean,
 }
 
-type Filter =
+export type Filter {
     | All
     | Active
     | Completed
+}
 
-type Validation =
-    | Valid(text: string)
+export type Validation {
+    | Valid { text: string }
     | TooShort
     | TooLong
     | Empty
+}
+
+export type Timestamped {
+    createdAt: number,
+    updatedAt: number,
+}
+
+export type TodoWithTimestamp {
+    ...Todo,
+    ...Timestamped,
+}
+
+export trait Display {
+    fn display(self) -> string
+}

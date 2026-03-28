@@ -24,6 +24,12 @@ pub enum ItemKind {
     Function(FunctionDecl),
     /// `type T = ...` or `export type T = ...`
     TypeDecl(TypeDecl),
+    /// `for Type { fn ... }` — group functions under a type
+    ForBlock(ForBlock),
+    /// `trait Name { fn ... }` — trait declaration
+    TraitDecl(TraitDecl),
+    /// `test "name" { assert expr ... }` — inline test block
+    TestBlock(TestBlock),
     /// Expression statement (for REPL / scripts)
     Expr(Expr),
 }
@@ -32,7 +38,11 @@ pub enum ItemKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportDecl {
+    /// Whether the entire import is trusted: `import trusted { ... } from "..."`
+    pub trusted: bool,
     pub specifiers: Vec<ImportSpecifier>,
+    /// For-import specifiers: `import { for User, for Array } from "..."`
+    pub for_specifiers: Vec<ForImportSpecifier>,
     pub source: String,
 }
 
@@ -40,6 +50,16 @@ pub struct ImportDecl {
 pub struct ImportSpecifier {
     pub name: String,
     pub alias: Option<String>,
+    /// Whether this specific import is trusted: `import { trusted foo } from "..."`
+    pub trusted: bool,
+    pub span: Span,
+}
+
+/// `for Type` specifier in an import: `import { for User } from "./helpers"`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForImportSpecifier {
+    /// The type name (base type only, no type params): e.g., "User", "Array"
+    pub type_name: String,
     pub span: Span,
 }
 
@@ -61,6 +81,8 @@ pub enum ConstBinding {
     Array(Vec<String>),
     /// Object destructuring: `const { a, b } = ...`
     Object(Vec<String>),
+    /// Tuple destructuring: `const (a, b) = ...`
+    Tuple(Vec<String>),
 }
 
 // ── Function Declaration ─────────────────────────────────────────
@@ -80,7 +102,19 @@ pub struct Param {
     pub name: String,
     pub type_ann: Option<TypeExpr>,
     pub default: Option<Expr>,
+    /// Destructuring pattern for this parameter: `|{ x, y }| ...`
+    /// When present, `name` is a generated identifier and this holds the field names.
+    pub destructure: Option<ParamDestructure>,
     pub span: Span,
+}
+
+/// Destructuring pattern for a function/lambda parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParamDestructure {
+    /// Object destructuring: `{ field1, field2 }`
+    Object(Vec<String>),
+    /// Array destructuring: `[a, b]`
+    Array(Vec<String>),
 }
 
 // ── Type Declarations ────────────────────────────────────────────
@@ -92,17 +126,30 @@ pub struct TypeDecl {
     pub name: String,
     pub type_params: Vec<String>,
     pub def: TypeDef,
+    /// `deriving (Display)` — auto-derive trait implementations for record types.
+    pub deriving: Vec<String>,
 }
 
 /// The right-hand side of a type declaration.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeDef {
-    /// Record type: `{ field: Type, ... }`
-    Record(Vec<RecordField>),
+    /// Record type: `{ field: Type, ...OtherType, ... }`
+    Record(Vec<RecordEntry>),
     /// Union type: `| Variant1 | Variant2(field: Type)`
     Union(Vec<Variant>),
     /// Type alias: `type X = SomeOtherType`
     Alias(TypeExpr),
+    /// String literal union: `"GET" | "POST" | "PUT" | "DELETE"`
+    StringLiteralUnion(Vec<String>),
+}
+
+/// An entry inside a record type definition — either a regular field or a spread.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecordEntry {
+    /// A regular field: `name: Type`
+    Field(Box<RecordField>),
+    /// A spread: `...OtherType` — includes all fields from the referenced record type
+    Spread(RecordSpread),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +158,49 @@ pub struct RecordField {
     pub type_ann: TypeExpr,
     pub default: Option<Expr>,
     pub span: Span,
+}
+
+/// A spread entry in a record type: `...TypeName`
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordSpread {
+    pub type_name: String,
+    pub span: Span,
+}
+
+impl RecordEntry {
+    /// Returns the field if this is a `RecordEntry::Field`, otherwise `None`.
+    pub fn as_field(&self) -> Option<&RecordField> {
+        match self {
+            RecordEntry::Field(f) => Some(f),
+            RecordEntry::Spread(_) => None,
+        }
+    }
+
+    /// Returns the spread if this is a `RecordEntry::Spread`, otherwise `None`.
+    pub fn as_spread(&self) -> Option<&RecordSpread> {
+        match self {
+            RecordEntry::Spread(s) => Some(s),
+            RecordEntry::Field(_) => None,
+        }
+    }
+}
+
+impl TypeDef {
+    /// Returns only the direct fields (excluding spreads) from a record type definition.
+    pub fn record_fields(&self) -> Vec<&RecordField> {
+        match self {
+            TypeDef::Record(entries) => entries.iter().filter_map(RecordEntry::as_field).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Returns the spread entries from a record type definition.
+    pub fn record_spreads(&self) -> Vec<&RecordSpread> {
+        match self {
+            TypeDef::Record(entries) => entries.iter().filter_map(RecordEntry::as_spread).collect(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,6 +217,61 @@ pub struct VariantField {
     pub span: Span,
 }
 
+// ── Trait Declarations ──────────────────────────────────────────
+
+/// `trait Name { fn method(self) -> T ... }` — trait declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDecl {
+    pub exported: bool,
+    pub name: String,
+    /// Methods declared in the trait (signatures and optional default bodies).
+    pub methods: Vec<TraitMethod>,
+    pub span: Span,
+}
+
+/// A method in a trait declaration. May have a default body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitMethod {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Option<TypeExpr>,
+    /// If Some, this is a default implementation.
+    pub body: Option<Expr>,
+    pub span: Span,
+}
+
+// ── For Blocks ──────────────────────────────────────────────────
+
+/// `for Type { fn f(self) -> T { ... } }` — group functions under a type.
+/// `for Type: Trait { fn f(self) -> T { ... } }` — implement a trait for a type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForBlock {
+    pub type_name: TypeExpr,
+    /// Optional trait bound: `for User: Display { ... }`
+    pub trait_name: Option<String>,
+    pub functions: Vec<FunctionDecl>,
+    pub span: Span,
+}
+
+// ── Test Blocks ─────────────────────────────────────────────────
+
+/// `test "name" { assert expr ... }` — inline test block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestBlock {
+    pub name: String,
+    pub body: Vec<TestStatement>,
+    pub span: Span,
+}
+
+/// A statement inside a test block.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TestStatement {
+    /// `assert expr` — asserts that the expression is truthy
+    Assert(Expr, Span),
+    /// A regular expression statement (e.g., const bindings, function calls)
+    Expr(Expr),
+}
+
 // ── Type Expressions ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +286,8 @@ pub enum TypeExprKind {
     Named {
         name: String,
         type_args: Vec<TypeExpr>,
+        /// Trait bounds on this type parameter: `T: Display + Eq`
+        bounds: Vec<String>,
     },
     /// Record type inline: `{ name: string, age: number }`
     Record(Vec<RecordField>),
@@ -196,8 +343,12 @@ pub enum ExprKind {
     Unwrap(Box<Expr>),
 
     // -- Calls & Construction --
-    /// Function call: `f(a, b, name: c)`
-    Call { callee: Box<Expr>, args: Vec<Arg> },
+    /// Function call: `f(a, b, name: c)` or `f<T>(a, b)`
+    Call {
+        callee: Box<Expr>,
+        type_args: Vec<TypeExpr>,
+        args: Vec<Arg>,
+    },
     /// Type constructor: `User(name: "Ryan", email: e)` or `User(..existing, name: "New")`
     Construct {
         type_name: String,
@@ -210,8 +361,12 @@ pub enum ExprKind {
     Index { object: Box<Expr>, index: Box<Expr> },
 
     // -- Functions --
-    /// Arrow function: `(a, b) => a + b`
-    Arrow { params: Vec<Param>, body: Box<Expr> },
+    /// Arrow function: `|a, b| a + b` or `async |a, b| a + b`
+    Arrow {
+        async_fn: bool,
+        params: Vec<Param>,
+        body: Box<Expr>,
+    },
 
     // -- Control flow --
     /// Match expression: `match x { Pat -> expr, ... }`
@@ -219,16 +374,10 @@ pub enum ExprKind {
         subject: Box<Expr>,
         arms: Vec<MatchArm>,
     },
-    /// If-else expression (only for JSX conditional blocks)
-    If {
-        condition: Box<Expr>,
-        then_branch: Box<Expr>,
-        else_branch: Option<Box<Expr>>,
-    },
-    /// Return: `return expr`
-    Return(Option<Box<Expr>>),
     /// Await: `await expr`
     Await(Box<Expr>),
+    /// Try: `try expr` — wraps a throwing expression in Result
+    Try(Box<Expr>),
 
     // -- Built-in constructors --
     /// `Ok(expr)`
@@ -239,6 +388,15 @@ pub enum ExprKind {
     Some(Box<Expr>),
     /// `None`
     None,
+    /// `parse<T>(value)` — compiler built-in for runtime type validation
+    Parse {
+        type_arg: TypeExpr,
+        value: Box<Expr>,
+    },
+    /// `todo` — placeholder that panics at runtime, type `never`
+    Todo,
+    /// `unreachable` — asserts unreachable code path, type `never`
+    Unreachable,
     /// Unit value: `()`
     Unit,
 
@@ -249,6 +407,8 @@ pub enum ExprKind {
     // -- Blocks --
     /// Block expression: `{ stmt1; stmt2; expr }`
     Block(Vec<Item>),
+    /// Collect block: `collect { ... }` — accumulates errors from `?` instead of short-circuiting
+    Collect(Vec<Item>),
 
     // -- Grouping --
     /// Parenthesized expression: `(a + b)`
@@ -258,9 +418,25 @@ pub enum ExprKind {
     /// Array literal: `[1, 2, 3]`
     Array(Vec<Expr>),
 
+    /// Object literal: `{ name: "Alice", age: 30 }`
+    /// Fields are (key, value) pairs. Shorthand `{ name }` desugars to `{ name: name }`.
+    Object(Vec<(String, Expr)>),
+
+    /// Tuple literal: `(1, 2)`, `("key", 42, true)`
+    Tuple(Vec<Expr>),
+
     // -- Spread --
     /// Spread: `...expr`
     Spread(Box<Expr>),
+
+    // -- Dot shorthand --
+    /// Dot shorthand: `.field` or `.field op expr` — creates an implicit lambda
+    DotShorthand {
+        /// The field name (e.g., `done` in `.done`)
+        field: String,
+        /// Optional operator and right-hand side (e.g., `== false` in `.done == false`)
+        predicate: Option<(BinOp, Box<Expr>)>,
+    },
 }
 
 /// Template literal parts for the AST.
@@ -312,6 +488,7 @@ pub enum UnaryOp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Expr>,
     pub body: Expr,
     pub span: Span,
 }
@@ -335,10 +512,24 @@ pub enum PatternKind {
     Variant { name: String, fields: Vec<Pattern> },
     /// Record destructuring pattern: `{ x, y }` or `{ ctrl: true }`
     Record { fields: Vec<(String, Pattern)> },
+    /// String pattern with captures: `"/users/{id}"` or `"/users/{id}/posts"`
+    StringPattern {
+        /// The segments of the string pattern (literal parts and capture names)
+        segments: Vec<StringPatternSegment>,
+    },
     /// Binding pattern (identifier): `x`, `msg`
     Binding(String),
     /// Wildcard pattern: `_`
     Wildcard,
+    /// Tuple pattern: `(x, y)`, `(_, 0)`
+    Tuple(Vec<Pattern>),
+    /// Array pattern: `[]`, `[a]`, `[a, b]`, `[first, ..rest]`
+    Array {
+        /// Fixed element patterns (before any rest pattern)
+        elements: Vec<Pattern>,
+        /// Optional rest binding: `..rest` captures the remaining tail
+        rest: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -346,6 +537,71 @@ pub enum LiteralPattern {
     Number(String),
     String(String),
     Bool(bool),
+}
+
+/// A segment in a string pattern — either a literal part or a capture variable.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringPatternSegment {
+    /// A literal string segment: `"/users/"` in `"/users/{id}"`
+    Literal(String),
+    /// A capture variable: `id` in `"/users/{id}"`
+    Capture(String),
+}
+
+/// Parse a string value for `{name}` capture segments.
+/// Returns `Some(segments)` if the string contains at least one capture,
+/// or `None` if it's a plain string literal (no captures).
+pub fn parse_string_pattern_segments(s: &str) -> Option<Vec<StringPatternSegment>> {
+    // Quick check: does the string contain any `{...}` patterns?
+    if !s.contains('{') {
+        return None;
+    }
+
+    let mut segments = Vec::new();
+    let mut current_literal = String::new();
+    let mut chars = s.chars().peekable();
+    let mut has_capture = false;
+
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            // Collect the capture name
+            let mut name = String::new();
+            for ch in chars.by_ref() {
+                if ch == '}' {
+                    break;
+                }
+                name.push(ch);
+            }
+
+            // Validate: capture name must be a valid identifier (non-empty, alphanumeric + _)
+            if !name.is_empty()
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && name.starts_with(|c: char| c.is_alphabetic() || c == '_')
+            {
+                // Push any preceding literal
+                if !current_literal.is_empty() {
+                    segments.push(StringPatternSegment::Literal(std::mem::take(
+                        &mut current_literal,
+                    )));
+                }
+                segments.push(StringPatternSegment::Capture(name));
+                has_capture = true;
+            } else {
+                // Not a valid capture — treat as literal text
+                current_literal.push('{');
+                current_literal.push_str(&name);
+                current_literal.push('}');
+            }
+        } else {
+            current_literal.push(ch);
+        }
+    }
+
+    if !current_literal.is_empty() {
+        segments.push(StringPatternSegment::Literal(current_literal));
+    }
+
+    if has_capture { Some(segments) } else { None }
 }
 
 // ── JSX ──────────────────────────────────────────────────────────

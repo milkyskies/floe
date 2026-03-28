@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Snowflake with rotational spin -->
+  <g transform="translate(64, 64)" stroke="#3B82F6" stroke-width="4.5" stroke-linecap="round" fill="none">
+    <!-- Center hexagon -->
+    <polygon points="0,-8 6.9,-4 6.9,4 0,8 -6.9,4 -6.9,-4" />
+    <!-- Six arms with swept branches (each arm + branch rotated 60°) -->
+    <!-- Arm 1 (0°) -->
+    <g transform="rotate(0)">
+      <line x1="0" y1="-10" x2="0" y2="-44" />
+      <line x1="0" y1="-28" x2="12" y2="-38" />
+      <line x1="0" y1="-18" x2="10" y2="-24" />
+    </g>
+    <!-- Arm 2 (60°) -->
+    <g transform="rotate(60)">
+      <line x1="0" y1="-10" x2="0" y2="-44" />
+      <line x1="0" y1="-28" x2="12" y2="-38" />
+      <line x1="0" y1="-18" x2="10" y2="-24" />
+    </g>
+    <!-- Arm 3 (120°) -->
+    <g transform="rotate(120)">
+      <line x1="0" y1="-10" x2="0" y2="-44" />
+      <line x1="0" y1="-28" x2="12" y2="-38" />
+      <line x1="0" y1="-18" x2="10" y2="-24" />
+    </g>
+    <!-- Arm 4 (180°) -->
+    <g transform="rotate(180)">
+      <line x1="0" y1="-10" x2="0" y2="-44" />
+      <line x1="0" y1="-28" x2="12" y2="-38" />
+      <line x1="0" y1="-18" x2="10" y2="-24" />
+    </g>
+    <!-- Arm 5 (240°) -->
+    <g transform="rotate(240)">
+      <line x1="0" y1="-10" x2="0" y2="-44" />
+      <line x1="0" y1="-28" x2="12" y2="-38" />
+      <line x1="0" y1="-18" x2="10" y2="-24" />
+    </g>
+    <!-- Arm 6 (300°) -->
+    <g transform="rotate(300)">
+      <line x1="0" y1="-10" x2="0" y2="-44" />
+      <line x1="0" y1="-28" x2="12" y2="-38" />
+      <line x1="0" y1="-18" x2="10" y2="-24" />
+    </g>
+  </g>
+</svg>

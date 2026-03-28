@@ -1,0 +1,35 @@
+// SYNTAX TEST "source.floe"
+
+fn validate(text: string) -> Validation {
+// <-- storage.type.floe
+// ^^^^^^^^ entity.name.function.floe
+//                ^^^^^^ support.type.primitive.floe
+//                        ^^ keyword.operator.arrow.floe
+
+    match len {
+//  ^^^^^ keyword.control.floe
+        0 -> Empty,
+//        ^^ keyword.operator.arrow.floe
+    }
+}
+
+fn handleDelete(id: string) {
+// <-- storage.type.floe
+// ^^^^^^^^^^^^ entity.name.function.floe
+
+    return <div>
+//          ^^^ entity.name.tag.floe
+        <button onClick={handleAdd}>
+//       ^^^^^^ entity.name.tag.floe
+//              ^^^^^^^ entity.other.attribute-name.floe
+        </button>
+//        ^^^^^^ entity.name.tag.floe
+    </div>
+//    ^^^ entity.name.tag.floe
+}
+
+const x = true
+//        ^^^^ constant.language.boolean.floe
+
+function bad() {}
+// <-- invalid.illegal.keyword.floe

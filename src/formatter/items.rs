@@ -84,6 +84,7 @@ impl Formatter<'_> {
 
         let has_lbracket = self.has_token(node, SyntaxKind::L_BRACKET);
         let has_lbrace_before_eq = self.has_brace_destructuring(node);
+        let has_lparen_before_eq = self.has_paren_destructuring(node);
 
         if has_lbracket {
             self.write("[");
@@ -95,6 +96,11 @@ impl Formatter<'_> {
             let idents = self.collect_idents_before_eq(node);
             self.write(&idents.join(", "));
             self.write(" }");
+        } else if has_lparen_before_eq {
+            self.write("(");
+            let idents = self.collect_idents_before_eq(node);
+            self.write(&idents.join(", "));
+            self.write(")");
         } else {
             let idents = self.collect_idents_before_colon_or_eq(node);
             if let Some(name) = idents.first() {
@@ -134,23 +140,64 @@ impl Formatter<'_> {
             self.write(&name);
         }
 
-        self.write("(");
         let params: Vec<_> = node
             .children()
             .filter(|c| c.kind() == SyntaxKind::PARAM)
             .collect();
-        for (i, param) in params.iter().enumerate() {
-            if i > 0 {
-                self.write(", ");
-            }
-            self.fmt_param(param);
-        }
-        self.write(")");
 
         let return_type = node.children().find(|c| c.kind() == SyntaxKind::TYPE_EXPR);
-        if let Some(rt) = return_type {
-            self.write(" -> ");
-            self.fmt_type_expr(&rt);
+
+        // Try inline params + return type
+        let inline = self.try_inline(|f| {
+            f.write("(");
+            for (i, param) in params.iter().enumerate() {
+                if i > 0 {
+                    f.write(", ");
+                }
+                f.fmt_param(param);
+            }
+            f.write(")");
+            if let Some(rt) = &return_type {
+                f.write(" -> ");
+                f.fmt_type_expr(rt);
+            }
+            f.write(" {");
+        });
+
+        if self.fits_inline(&inline) {
+            // Inline: fn name(a: T, b: U) -> R {
+            self.write("(");
+            for (i, param) in params.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.fmt_param(param);
+            }
+            self.write(")");
+
+            if let Some(rt) = &return_type {
+                self.write(" -> ");
+                self.fmt_type_expr(rt);
+            }
+        } else {
+            // Multi-line: fn name(\n    a: T,\n    b: U,\n) -> R
+            self.write("(");
+            self.indent += 1;
+            for param in &params {
+                self.newline();
+                self.write_indent();
+                self.fmt_param(param);
+                self.write(",");
+            }
+            self.indent -= 1;
+            self.newline();
+            self.write_indent();
+            self.write(")");
+
+            if let Some(rt) = &return_type {
+                self.write(" -> ");
+                self.fmt_type_expr(rt);
+            }
         }
 
         self.write(" ");
@@ -195,8 +242,6 @@ impl Formatter<'_> {
             self.write(">");
         }
 
-        self.write(" =");
-
         for child in node.children() {
             match child.kind() {
                 SyntaxKind::TYPE_DEF_UNION => {
@@ -206,9 +251,15 @@ impl Formatter<'_> {
                     self.write(" ");
                     self.fmt_record_def(&child);
                 }
-                SyntaxKind::TYPE_DEF_ALIAS => {
-                    self.write(" ");
+                SyntaxKind::TYPE_DEF_ALIAS | SyntaxKind::TYPE_DEF_STRING_UNION => {
+                    self.write(" = ");
                     self.fmt_type_alias_def(&child);
+                }
+                SyntaxKind::DERIVING_CLAUSE => {
+                    self.write(" deriving (");
+                    let deriving_idents = self.collect_idents_direct(&child);
+                    self.write(&deriving_idents.join(", "));
+                    self.write(")");
                 }
                 _ => {}
             }
@@ -221,6 +272,25 @@ impl Formatter<'_> {
             .filter(|c| c.kind() == SyntaxKind::VARIANT)
             .collect();
 
+        // Newtype case: no VARIANT children, just VARIANT_FIELD directly
+        if variants.is_empty() {
+            self.write(" {");
+            self.indent += 1;
+            self.newline();
+            self.write_indent();
+            for child in node.children() {
+                if child.kind() == SyntaxKind::VARIANT_FIELD {
+                    self.fmt_variant_field(&child);
+                }
+            }
+            self.indent -= 1;
+            self.newline();
+            self.write_indent();
+            self.write("}");
+            return;
+        }
+
+        self.write(" {");
         self.indent += 1;
         for variant in &variants {
             self.newline();
@@ -229,6 +299,9 @@ impl Formatter<'_> {
             self.fmt_variant(variant);
         }
         self.indent -= 1;
+        self.newline();
+        self.write_indent();
+        self.write("}");
     }
 
     fn fmt_variant(&mut self, node: &SyntaxNode) {
@@ -248,14 +321,14 @@ impl Formatter<'_> {
             .collect();
 
         if !fields.is_empty() {
-            self.write("(");
+            self.write(" { ");
             for (i, field) in fields.iter().enumerate() {
                 if i > 0 {
                     self.write(", ");
                 }
                 self.fmt_variant_field(field);
             }
-            self.write(")");
+            self.write(" }");
         }
     }
 
@@ -274,28 +347,42 @@ impl Formatter<'_> {
     }
 
     pub(crate) fn fmt_record_def(&mut self, node: &SyntaxNode) {
-        let fields: Vec<_> = node
+        // Collect fields and spreads in source order
+        let members: Vec<_> = node
             .children()
-            .filter(|c| c.kind() == SyntaxKind::RECORD_FIELD)
+            .filter(|c| {
+                c.kind() == SyntaxKind::RECORD_FIELD || c.kind() == SyntaxKind::RECORD_SPREAD
+            })
             .collect();
 
         self.write("{");
-        if fields.is_empty() {
+        if members.is_empty() {
             self.write("}");
             return;
         }
 
         self.indent += 1;
-        for field in &fields {
+        for member in &members {
             self.newline();
             self.write_indent();
-            self.fmt_record_field(field);
+            if member.kind() == SyntaxKind::RECORD_SPREAD {
+                self.fmt_record_spread(member);
+            } else {
+                self.fmt_record_field(member);
+            }
             self.write(",");
         }
         self.indent -= 1;
         self.newline();
         self.write_indent();
         self.write("}");
+    }
+
+    fn fmt_record_spread(&mut self, node: &SyntaxNode) {
+        self.write("...");
+        if let Some(name) = self.first_ident(node) {
+            self.write(&name);
+        }
     }
 
     pub(crate) fn fmt_record_field(&mut self, node: &SyntaxNode) {
@@ -323,6 +410,7 @@ impl Formatter<'_> {
 
     pub(crate) fn fmt_type_expr(&mut self, node: &SyntaxNode) {
         let idents = self.collect_idents(node);
+        let has_fat_arrow = self.has_token(node, SyntaxKind::FAT_ARROW);
         let has_thin_arrow = self.has_token(node, SyntaxKind::THIN_ARROW);
         let has_lbracket = self.has_token(node, SyntaxKind::L_BRACKET);
         let has_lparen = self.has_token(node, SyntaxKind::L_PAREN);
@@ -335,13 +423,36 @@ impl Formatter<'_> {
             .collect();
 
         // Unit type: ()
-        if has_lparen && idents.is_empty() && !has_thin_arrow && child_type_exprs.is_empty() {
+        if has_lparen
+            && idents.is_empty()
+            && !has_fat_arrow
+            && !has_thin_arrow
+            && child_type_exprs.is_empty()
+        {
             self.write("()");
             return;
         }
 
-        // Function type: (params) -> ReturnType
-        if has_thin_arrow {
+        // Tuple type: (T, U)
+        if has_lparen
+            && !has_thin_arrow
+            && !has_fat_arrow
+            && !child_type_exprs.is_empty()
+            && idents.is_empty()
+        {
+            self.write("(");
+            for (i, te) in child_type_exprs.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.fmt_type_expr(te);
+            }
+            self.write(")");
+            return;
+        }
+
+        // Function type: (params) => ReturnType
+        if has_fat_arrow || has_thin_arrow {
             self.write("(");
             let param_count = child_type_exprs.len().saturating_sub(1);
             for (i, te) in child_type_exprs.iter().enumerate() {
@@ -353,7 +464,7 @@ impl Formatter<'_> {
                 }
                 self.fmt_type_expr(te);
             }
-            self.write(") -> ");
+            self.write(") => ");
             if let Some(ret) = child_type_exprs.last() {
                 self.fmt_type_expr(ret);
             }

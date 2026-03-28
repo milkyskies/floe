@@ -25,7 +25,7 @@ npm run build
 
 Full TextMate grammar for `.fl` files:
 - Keywords (`const`, `fn`, `match`, `type`, etc.)
-- Operators (`|>`, `->`, `|x|`, `?`)
+- Operators (`|>`, `->`, `=>`, `?`)
 - JSX elements and attributes
 - Template literals with interpolation
 - Banned keyword highlighting (visual warning for `let`, `class`, etc.)
@@ -58,7 +58,7 @@ Full IDE features powered by `floe lsp`:
 | `imp` | Import statement |
 | `pipe` | Pipe expression |
 | `co` | Const declaration |
-| `brand` | Brand type |
+| `newtype` | Newtype wrapper |
 | `opaque` | Opaque type |
 
 ## Configuration

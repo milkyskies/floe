@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::diagnostic::{self as zs_diag};
+use crate::diagnostic::{self as floe_diag};
 use crate::interop;
 use crate::parser::ast::*;
 
@@ -79,7 +79,7 @@ pub(super) fn enrich_from_imports(
     index: &mut SymbolIndex,
     dts_cache: &HashMap<String, Vec<interop::DtsExport>>,
 ) -> (
-    Vec<zs_diag::Diagnostic>,
+    Vec<floe_diag::Diagnostic>,
     HashMap<String, Vec<interop::DtsExport>>,
 ) {
     let mut import_diags = Vec::new();
@@ -97,12 +97,12 @@ pub(super) fn enrich_from_imports(
             // Validate relative imports exist
             if resolve_relative_import(specifier, source_dir).is_none() {
                 import_diags.push(
-                    zs_diag::Diagnostic::error(
-                        format!("cannot find module \"{}\"", specifier),
+                    floe_diag::Diagnostic::error(
+                        format!("cannot find module `\"{specifier}\"`"),
                         item.span,
                     )
                     .with_label("module not found")
-                    .with_help("Check the file path and extension")
+                    .with_help("check the file path and extension")
                     .with_code("E012"),
                 );
             }
@@ -118,6 +118,15 @@ pub(super) fn enrich_from_imports(
                 Err(_) => continue,
             }
         } else {
+            import_diags.push(
+                floe_diag::Diagnostic::error(
+                    format!("cannot find module `\"{specifier}\"`"),
+                    item.span,
+                )
+                .with_label("package not found")
+                .with_help("check that the package is installed (`npm install`)")
+                .with_code("E013"),
+            );
             continue;
         };
 

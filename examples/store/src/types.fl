@@ -1,0 +1,109 @@
+// ── Newtype wrappers ───────────────────────────────────
+// Single-variant unions as newtypes (Gleam/Rust style).
+
+export type ProductId { number }
+export type OrderId { number }
+
+// ── Shared field groups ────────────────────────────────
+// Record type composition with spread.
+
+type WithRating {
+    rating: number,
+}
+
+// ── Product (from DummyJSON API) ───────────────────────
+
+export type Product {
+    id: ProductId,
+    title: string,
+    description: string,
+    category: string,
+    price: number,
+    discountPercentage: number,
+    ...WithRating,
+    stock: number,
+    tags: Array<string>,
+    brand: string,
+    thumbnail: string,
+    images: Array<string>,
+} deriving (Display)
+
+export type Review {
+    ...WithRating,
+    comment: string,
+    date: string,
+    reviewerName: string,
+}
+
+// ── Cart ───────────────────────────────────────────────
+
+export type CartItem {
+    product: Product,
+    quantity: number,
+}
+
+// ── Nested error unions ────────────────────────────────
+
+export type NetworkError {
+    | Timeout { ms: number }
+    | DnsFailure { host: string }
+    | ConnectionRefused
+}
+
+export type ApiError {
+    | Network { NetworkError }
+    | NotFound { id: ProductId }
+    | BadResponse { status: number, body: string }
+    | ParseError { message: string }
+}
+
+// ── Sort + Filter ──────────────────────────────────────
+
+export type SortOrder {
+    | PriceLow
+    | PriceHigh
+    | Rating
+    | Name
+}
+
+export type PriceRange {
+    | Any
+    | Under { max: number }
+    | Between { min: number, max: number }
+    | Over { min: number }
+}
+
+// ── Order ──────────────────────────────────────────────
+
+export type OrderStatus {
+    | Pending
+    | Confirmed { orderId: OrderId }
+    | Shipped { tracking: string }
+    | Failed { reason: string }
+}
+
+// ── Checkout validation ────────────────────────────────
+
+export type CheckoutError {
+    | EmptyCart
+    | InvalidEmail { email: string }
+    | InvalidPhone { phone: string }
+    | OutOfStock { productId: ProductId }
+}
+
+export type ShippingInfo {
+    name: string,
+    email: string,
+    phone: string,
+    address: string,
+}
+
+// ── Traits ─────────────────────────────────────────────
+
+export trait Display {
+    fn display(self) -> string
+}
+
+export trait Discountable {
+    fn effectivePrice(self) -> number
+}

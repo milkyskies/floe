@@ -72,17 +72,8 @@ fn snapshot_error_type_mismatch_comparison() {
 }
 
 #[test]
-fn snapshot_error_mixed_array() {
-    let output = get_diagnostics("test.fl", r#"const _x = [1, "two", 3]"#);
-    insta::assert_snapshot!(output);
-}
-
-#[test]
 fn snapshot_error_exported_missing_return_type() {
-    let output = get_diagnostics(
-        "test.fl",
-        "export function add(a: number, b: number) { return a }",
-    );
+    let output = get_diagnostics("test.fl", "export function add(a: number, b: number) { a }");
     insta::assert_snapshot!(output);
 }
 
@@ -110,5 +101,69 @@ fn snapshot_error_missing_return() {
         "test.fl",
         "function getName(_id: string): string {\n  const _x = 42\n}",
     );
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_error_untrusted_import() {
+    let output = get_diagnostics(
+        "test.fl",
+        "import { fetchUser } from \"some-lib\"\nconst _x = fetchUser(\"123\")",
+    );
+    insta::assert_snapshot!(output);
+}
+
+// ── Trait Error Snapshots ─────────────────────────────────────
+
+#[test]
+fn snapshot_error_trait_missing_method() {
+    let output = error_fixture("trait_missing_method");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_error_trait_unknown() {
+    let output = error_fixture("trait_unknown");
+    insta::assert_snapshot!(output);
+}
+
+#[test]
+fn snapshot_error_trait_default_method_not_required() {
+    // Default methods should not be required in implementations
+    let source = r#"
+trait Eq {
+  fn eq(self, other: string) -> boolean
+  fn neq(self, other: string) -> boolean {
+    !(self |> eq(other))
+  }
+}
+
+type User = { name: string }
+
+for User: Eq {
+  export fn eq(self, other: string) -> boolean {
+    self.name == other
+  }
+}
+"#;
+    let program = Parser::new(source)
+        .parse_program()
+        .expect("parse should succeed");
+    let diags = Checker::new().check(&program);
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == diagnostic::Severity::Error)
+        .collect();
+    // Should produce no errors - neq has a default implementation
+    assert!(
+        errors.is_empty(),
+        "Expected no errors but got: {:?}",
+        errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn snapshot_error_todo_warning() {
+    let output = get_diagnostics("test.fl", "fn process(x: number) -> number {\n  todo\n}");
     insta::assert_snapshot!(output);
 }

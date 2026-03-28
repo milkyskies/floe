@@ -8,10 +8,10 @@ Create a file called `hello.fl`:
 
 ```floe
 export fn greet(name: string) -> string {
-  return `Hello, ${name}!`
+  `Hello, ${name}!`
 }
 
-greet("world") |> console.log
+greet("world") |> Console.log
 ```
 
 Compile it:
@@ -40,9 +40,9 @@ import { useState } from "react"
 export fn Counter() -> JSX.Element {
   const [count, setCount] = useState(0)
 
-  return <div>
+  <div>
     <p>Count: {count}</p>
-    <button onClick={setCount}>+1</button>
+    <button onClick={() => setCount(count + 1)}>+1</button>
   </div>
 }
 ```
@@ -53,7 +53,7 @@ Compile it:
 floe build counter.fl
 ```
 
-This produces `counter.tsx` — a standard React component that works with any React setup.
+This produces `counter.tsx`, a standard React component that works with any React setup.
 
 ## Using Pipes
 
@@ -65,12 +65,12 @@ const result = toString(add(multiply(value, 2), 1))
 
 // With pipes (left to right)
 const result = value
-  |> multiply(_, 2)
-  |> add(_, 1)
+  |> multiply(2)
+  |> add(1)
   |> toString
 ```
 
-The `_` placeholder marks where the piped value goes.
+By default, the piped value is inserted as the first argument. Use `_` when you need it in a different position: `value |> f(other, _)` becomes `f(other, value)`.
 
 ## Type Checking
 

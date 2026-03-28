@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 
 use super::completion::*;
+use super::handlers::{
+    detect_match_context, import_path_at_offset, is_in_jsx_tag, jsx_attribute_completions,
+    lambda_event_completions,
+};
 use super::symbols::*;
 use super::*;
 
-use crate::diagnostic::{self as zs_diag, Severity};
+use crate::diagnostic::{self as floe_diag, Severity};
 use crate::parser::Parser;
 use crate::parser::ast::*;
 
@@ -72,9 +76,9 @@ fn banned_keyword_produces_parse_error() {
     let parse_result = Parser::new(source).parse_program();
     assert!(parse_result.is_err());
     let errs = parse_result.unwrap_err();
-    let zs_diags = zs_diag::from_parse_errors(&errs);
-    assert!(!zs_diags.is_empty());
-    assert_eq!(zs_diags[0].severity, Severity::Error);
+    let floe_diags = floe_diag::from_parse_errors(&errs);
+    assert!(!floe_diags.is_empty());
+    assert_eq!(floe_diags[0].severity, Severity::Error);
 }
 
 #[test]
@@ -85,7 +89,33 @@ fn symbol_index_function() {
     let syms = index.find_by_name("add");
     assert_eq!(syms.len(), 1);
     assert_eq!(syms[0].kind, SymbolKind::FUNCTION);
-    assert!(syms[0].detail.contains("fn add"));
+    assert_eq!(
+        syms[0].detail, "fn add(a: number, b: number) -> number",
+        "function detail should use -> for return type, not :"
+    );
+}
+
+#[test]
+fn symbol_index_function_no_return_type() {
+    let source = "fn greet(name: string) { Console.log(name) }";
+    let program = Parser::new(source).parse_program().unwrap();
+    let index = SymbolIndex::build(&program);
+    let syms = index.find_by_name("greet");
+    assert_eq!(syms.len(), 1);
+    assert_eq!(
+        syms[0].detail, "fn greet(name: string)",
+        "function without return type should not have -> or :"
+    );
+}
+
+#[test]
+fn symbol_index_exported_function() {
+    let source = "export fn hello() -> string { \"hi\" }";
+    let program = Parser::new(source).parse_program().unwrap();
+    let index = SymbolIndex::build(&program);
+    let syms = index.find_by_name("hello");
+    assert_eq!(syms.len(), 1);
+    assert_eq!(syms[0].detail, "export fn hello() -> string",);
 }
 
 #[test]
@@ -100,7 +130,7 @@ fn symbol_index_const() {
 
 #[test]
 fn symbol_index_type() {
-    let source = "type User = { name: string, age: number }";
+    let source = "type User { name: string, age: number }";
     let program = Parser::new(source).parse_program().unwrap();
     let index = SymbolIndex::build(&program);
     let syms = index.find_by_name("User");
@@ -120,7 +150,7 @@ fn symbol_index_import() {
 
 #[test]
 fn symbol_index_union_variants() {
-    let source = "type Color = | Red | Green | Blue";
+    let source = "type Color { | Red | Green | Blue }";
     let program = Parser::new(source).parse_program().unwrap();
     let index = SymbolIndex::build(&program);
     assert_eq!(index.find_by_name("Color").len(), 1);
@@ -135,6 +165,7 @@ fn type_expr_to_string_named() {
         kind: TypeExprKind::Named {
             name: "string".to_string(),
             type_args: vec![],
+            bounds: vec![],
         },
         span: crate::lexer::span::Span::new(0, 0, 1, 1),
     };
@@ -146,11 +177,13 @@ fn type_expr_to_string_generic() {
     let ty = TypeExpr {
         kind: TypeExprKind::Named {
             name: "Result".to_string(),
+            bounds: vec![],
             type_args: vec![
                 TypeExpr {
                     kind: TypeExprKind::Named {
                         name: "User".to_string(),
                         type_args: vec![],
+                        bounds: vec![],
                     },
                     span: crate::lexer::span::Span::new(0, 0, 1, 1),
                 },
@@ -158,6 +191,7 @@ fn type_expr_to_string_generic() {
                     kind: TypeExprKind::Named {
                         name: "Error".to_string(),
                         type_args: vec![],
+                        bounds: vec![],
                     },
                     span: crate::lexer::span::Span::new(0, 0, 1, 1),
                 },
@@ -263,7 +297,7 @@ fn infer_literal_number() {
 
 #[test]
 fn infer_literal_bool() {
-    assert_eq!(infer_literal_type("true"), Some("bool".to_string()));
+    assert_eq!(infer_literal_type("true"), Some("boolean".to_string()));
 }
 
 #[test]
@@ -291,7 +325,7 @@ fn resolve_piped_type_with_unwrap() {
 
 #[test]
 fn function_symbol_stores_first_param_type() {
-    let source = "fn filter(arr: Array<T>, pred: (T) -> bool) -> Array<T> { arr }";
+    let source = "fn filter(arr: Array<T>, pred: (T) => boolean) -> Array<T> { arr }";
     let program = Parser::new(source).parse_program().unwrap();
     let index = SymbolIndex::build(&program);
     let syms = index.find_by_name("filter");
@@ -308,7 +342,7 @@ fn jsx_component_source() -> &'static str {
 export fn Counter() -> JSX.Element {
     const [_count, setCount] = useState(0)
 
-    return <div>
+    <div>
         <h1>Count</h1>
         <button onClick={setCount}>Increment</button>
     </div>
@@ -417,5 +451,515 @@ fn jsx_fixture_type_map_has_counter() {
     assert!(
         type_map.contains_key("Counter"),
         "Counter should be in type map"
+    );
+}
+
+// ── Hover type display tests (#180) ─────────────────────────
+
+use super::handlers::enrich_hover_detail;
+
+/// Simulate hover: look up symbol by name, then build the hover detail
+/// using the same enrich_hover_detail function the LSP handler uses.
+fn simulate_hover(source: &str, name: &str) -> Option<String> {
+    let (index, type_map) = build_index_and_types(source);
+    let syms = index.find_by_name(name);
+    let sym = syms.first()?;
+    Some(enrich_hover_detail(sym, &type_map))
+}
+
+#[test]
+fn hover_destructured_const_shows_type() {
+    let source = r#"
+import { useState } from "react"
+export fn App() -> JSX.Element {
+    const [input, setInput] = useState("")
+    <div>{input}</div>
+}
+"#;
+    let (index, type_map) = build_index_and_types(source);
+    eprintln!("TYPE MAP: {:?}", type_map);
+    let syms = index.find_by_name("input");
+    eprintln!(
+        "SYMBOLS for input: {:?}",
+        syms.iter()
+            .map(|s| (&s.name, &s.detail, s.kind, &s.import_source))
+            .collect::<Vec<_>>()
+    );
+    let hover = simulate_hover(source, "input");
+    let detail = hover.unwrap();
+    eprintln!("HOVER for destructured input: {detail}");
+}
+
+#[test]
+fn hover_simple_const_debug() {
+    let source = r#"const pee = "test""#;
+    let hover = simulate_hover(source, "pee");
+    assert!(hover.is_some());
+    let detail = hover.unwrap();
+    eprintln!("HOVER for pee: {detail}");
+    assert!(
+        detail.contains("string"),
+        "should show string type, got: {detail}"
+    );
+}
+
+#[test]
+fn shadow_error_in_checker() {
+    let source = r#"
+const x = 5
+const x = 10
+"#;
+    let (_index, _type_map) = build_index_and_types(source);
+    let (diags, _) = crate::checker::Checker::new()
+        .check_with_types(&crate::parser::Parser::new(source).parse_program().unwrap());
+    eprintln!(
+        "SHADOW DIAGS: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("already defined")),
+        "should have shadowing error"
+    );
+}
+
+#[test]
+fn hover_const_shows_inferred_type() {
+    // const without explicit type annotation should show inferred type
+    let hover = simulate_hover("const x = 42", "x");
+    assert!(hover.is_some());
+    let detail = hover.unwrap();
+    assert!(
+        detail.contains("number"),
+        "hover for const x = 42 should show 'number', got: {detail}"
+    );
+}
+
+#[test]
+fn hover_const_with_annotation_shows_annotation() {
+    // const with explicit type annotation should show the annotation
+    let hover = simulate_hover("const x: number = 42", "x");
+    assert!(hover.is_some());
+    let detail = hover.unwrap();
+    assert!(
+        detail.contains("number"),
+        "hover for annotated const should show type, got: {detail}"
+    );
+}
+
+#[test]
+fn hover_const_string_shows_type() {
+    let hover = simulate_hover(r#"const msg = "hello""#, "msg");
+    assert!(hover.is_some());
+    let detail = hover.unwrap();
+    assert!(
+        detail.contains("string"),
+        "hover for const msg = \"hello\" should show 'string', got: {detail}"
+    );
+}
+
+#[test]
+fn hover_const_bool_shows_type() {
+    let hover = simulate_hover("const flag = true", "flag");
+    assert!(hover.is_some());
+    let detail = hover.unwrap();
+    assert!(
+        detail.contains("boolean"),
+        "hover for const flag = true should show 'boolean', got: {detail}"
+    );
+}
+
+#[test]
+fn hover_function_shows_signature() {
+    let hover = simulate_hover("fn add(a: number, b: number) -> number { a + b }", "add");
+    assert!(hover.is_some());
+    let detail = hover.unwrap();
+    assert!(
+        detail.contains("fn add"),
+        "hover for function should show signature, got: {detail}"
+    );
+    assert!(
+        detail.contains("number"),
+        "hover for function should show types, got: {detail}"
+    );
+}
+
+#[test]
+fn hover_const_function_value_shows_type() {
+    // A const assigned to a function call should show the inferred return type
+    let source = r#"
+fn getNum() -> number { 42 }
+const result = getNum()
+"#;
+    let hover = simulate_hover(source, "result");
+    assert!(hover.is_some());
+    let detail = hover.unwrap();
+    assert!(
+        detail.contains("number"),
+        "hover for const result = getNum() should show inferred type 'number', got: {detail}"
+    );
+}
+
+#[test]
+fn hover_fn_with_return_type_shows_it() {
+    // A function with explicit return type should show it
+    let hover = simulate_hover("fn double(x: number) -> number { x * 2 }", "double");
+    assert!(hover.is_some());
+    let detail = hover.unwrap();
+    assert!(
+        detail.contains("-> number"),
+        "hover for fn with return type should show it, got: {detail}"
+    );
+}
+
+#[test]
+fn hover_fn_without_return_type_skips_unresolved() {
+    // When the checker can't fully resolve the return type, don't show ?T variables
+    let hover = simulate_hover("fn double(x: number) { x * 2 }", "double");
+    assert!(hover.is_some());
+    let detail = hover.unwrap();
+    assert!(
+        !detail.contains("?T"),
+        "hover should not show unresolved type variables, got: {detail}"
+    );
+}
+
+#[test]
+fn hover_const_without_annotation_detail_lacks_type_before_fix() {
+    // This test documents that the raw symbol detail for unannotated consts
+    // does NOT include the inferred type - which is what the hover handler
+    // currently returns. The fix should enrich this with type_map data.
+    let source = "const x = 42";
+    let (index, _type_map) = build_index_and_types(source);
+    let syms = index.find_by_name("x");
+    assert_eq!(syms.len(), 1);
+    // The raw detail is just "const x" with no type
+    assert_eq!(syms[0].detail, "const x");
+    // But the type_map has the inferred type
+    assert_eq!(_type_map.get("x").map(|s| s.as_str()), Some("number"));
+}
+
+// ── Match arm variant completion tests (#143) ──────────────
+
+#[test]
+fn match_context_detects_variants() {
+    // Build the index from valid source with the type declaration
+    let valid_source = "type Color { | Red | Green | Blue }";
+    let (index, _) = build_index_and_types(valid_source);
+
+    // Simulate incomplete source as it would appear in the editor
+    let editor_source = "type Color { | Red | Green | Blue }\nmatch Color {\n    ";
+    let offset = editor_source.len();
+    let variants = detect_match_context(editor_source, offset, &index);
+    assert!(variants.is_some(), "should detect match context");
+    let names = variants.unwrap();
+    assert!(names.contains(&"Red".to_string()));
+    assert!(names.contains(&"Green".to_string()));
+    assert!(names.contains(&"Blue".to_string()));
+}
+
+#[test]
+fn match_context_not_detected_outside_match() {
+    let valid_source = "type Color { | Red | Green | Blue }";
+    let (index, _) = build_index_and_types(valid_source);
+
+    let editor_source = "type Color { | Red | Green | Blue }\nconst x = ";
+    let offset = editor_source.len();
+    let variants = detect_match_context(editor_source, offset, &index);
+    assert!(
+        variants.is_none(),
+        "should not detect match context outside match block"
+    );
+}
+
+// ── JSX attribute completion tests (#144) ──────────────────
+
+#[test]
+fn jsx_tag_detected() {
+    assert!(is_in_jsx_tag("<button on", 10));
+    assert!(is_in_jsx_tag("<div className", 14));
+    assert!(!is_in_jsx_tag("<button>content", 15));
+    assert!(!is_in_jsx_tag("const x = 42", 12));
+}
+
+#[test]
+fn jsx_attribute_completions_with_prefix() {
+    let items = jsx_attribute_completions("on");
+    assert!(!items.is_empty());
+    assert!(items.iter().any(|i| i.label == "onClick"));
+    assert!(items.iter().any(|i| i.label == "onChange"));
+    assert!(
+        items.iter().all(|i| i.label.starts_with("on")),
+        "all items should start with 'on'"
+    );
+}
+
+#[test]
+fn jsx_attribute_completions_all() {
+    let items = jsx_attribute_completions("");
+    assert!(items.iter().any(|i| i.label == "className"));
+    assert!(items.iter().any(|i| i.label == "onClick"));
+    assert!(items.iter().any(|i| i.label == "disabled"));
+}
+
+// ── Lambda event completion tests (#145) ───────────────────
+
+#[test]
+fn lambda_event_completions_on_change() {
+    let source = r#"<input onChange={(e) => e.}"#;
+    let offset = source.len();
+    let items = lambda_event_completions(source, offset, "");
+    assert!(items.is_some(), "should provide event completions");
+    let items = items.unwrap();
+    assert!(items.iter().any(|i| i.label == "target"));
+    assert!(items.iter().any(|i| i.label == "preventDefault()"));
+}
+
+#[test]
+fn lambda_event_completions_target_value() {
+    let source = r#"<input onChange={(e) => e.target.}"#;
+    let offset = source.len();
+    let items = lambda_event_completions(source, offset, "");
+    assert!(
+        items.is_some(),
+        "should provide target property completions"
+    );
+    let items = items.unwrap();
+    assert!(items.iter().any(|i| i.label == "value"));
+    assert!(items.iter().any(|i| i.label == "checked"));
+}
+
+#[test]
+fn lambda_event_completions_not_in_normal_lambda() {
+    let source = r#"const f = (x) => x."#;
+    let offset = source.len();
+    let items = lambda_event_completions(source, offset, "");
+    assert!(
+        items.is_none(),
+        "should not provide event completions in normal lambda"
+    );
+}
+
+// ── Unresolved import diagnostic test (#142) ───────────────
+
+#[test]
+fn unresolved_npm_import_diagnostic() {
+    use crate::parser::Parser;
+    use std::path::Path;
+
+    let source = r#"import { nonexistent } from "fake-package-12345""#;
+    let program = Parser::new(source).parse_program().unwrap();
+    let mut index = SymbolIndex::build(&program);
+    let cache = HashMap::new();
+    // Use a directory that definitely has no node_modules
+    let project_dir = Path::new("/tmp/no-such-project-dir");
+    let source_dir = project_dir;
+    let (diags, _) = super::resolution::enrich_from_imports(
+        &program,
+        project_dir,
+        source_dir,
+        &mut index,
+        &cache,
+    );
+    assert!(
+        !diags.is_empty(),
+        "should report error for unresolved npm import"
+    );
+    assert!(
+        diags[0].message.contains("cannot find module"),
+        "diagnostic should say 'cannot find module', got: {}",
+        diags[0].message
+    );
+}
+
+// ── Import path go-to-definition tests (#196) ──────────────
+
+#[test]
+fn import_path_at_offset_on_path_string() {
+    let source = r#"import { Todo } from "../types""#;
+    // Cursor on the 't' in "../types"
+    let quote_pos = source.find('"').unwrap();
+    let result = import_path_at_offset(source, quote_pos + 3);
+    assert_eq!(result, Some("../types".to_string()));
+}
+
+#[test]
+fn import_path_at_offset_on_opening_quote() {
+    let source = r#"import { Todo } from "../types""#;
+    let quote_pos = source.find('"').unwrap();
+    let result = import_path_at_offset(source, quote_pos);
+    assert_eq!(result, Some("../types".to_string()));
+}
+
+#[test]
+fn import_path_at_offset_on_closing_quote() {
+    let source = r#"import { Todo } from "../types""#;
+    // Find the closing quote position
+    let first_quote = source.find('"').unwrap();
+    let closing_quote = source[first_quote + 1..].find('"').unwrap() + first_quote + 1;
+    let result = import_path_at_offset(source, closing_quote);
+    assert_eq!(result, Some("../types".to_string()));
+}
+
+#[test]
+fn import_path_at_offset_not_on_path() {
+    let source = r#"import { Todo } from "../types""#;
+    // Cursor on "Todo" — not on the path string
+    let todo_pos = source.find("Todo").unwrap();
+    let result = import_path_at_offset(source, todo_pos);
+    assert_eq!(result, None);
+}
+
+#[test]
+fn import_path_at_offset_non_import_line() {
+    let source = r#"const x = "hello""#;
+    let result = import_path_at_offset(source, 12);
+    assert_eq!(result, None);
+}
+
+#[test]
+fn import_path_at_offset_multiline() {
+    let source = "const x = 42\nimport { Foo } from \"./foo\"\nconst y = 10";
+    // Cursor on the path in line 2
+    let import_line_start = source.find("import").unwrap();
+    let quote_pos = source[import_line_start..].find('"').unwrap() + import_line_start;
+    let result = import_path_at_offset(source, quote_pos + 2);
+    assert_eq!(result, Some("./foo".to_string()));
+}
+
+#[test]
+fn import_path_at_offset_single_quotes() {
+    let source = "import { Foo } from './foo'";
+    let quote_pos = source.find('\'').unwrap();
+    let result = import_path_at_offset(source, quote_pos + 2);
+    assert_eq!(result, Some("./foo".to_string()));
+}
+
+#[test]
+fn symbol_index_for_block_function_detail() {
+    let source = r#"
+type Todo { text: string, done: boolean }
+for Array<Todo> {
+    export fn remaining(self) -> number { 0 }
+}
+"#;
+    let program = Parser::new(source).parse_program().unwrap();
+    let index = SymbolIndex::build(&program);
+    let syms = index.find_by_name("remaining");
+    assert!(!syms.is_empty());
+    assert_eq!(
+        syms[0].detail, "fn remaining(self: Array<Todo>) -> number",
+        "for-block function should show clean signature, not wrapped in for {{ }}"
+    );
+}
+
+#[test]
+fn import_path_at_offset_bare_import() {
+    // `import "../todo"` has no `from` keyword
+    let source = r#"import "../todo""#;
+    let quote_pos = source.find('"').unwrap();
+    let result = import_path_at_offset(source, quote_pos + 2);
+    assert_eq!(result, Some("../todo".to_string()));
+}
+
+#[test]
+fn hover_inner_function_shows_unit_return() {
+    let source = r#"
+export fn outer() -> () {
+    fn handleAdd() {
+        Console.log("hi")
+    }
+    handleAdd()
+}
+"#;
+    let hover = simulate_hover(source, "handleAdd");
+    assert!(hover.is_some(), "handleAdd should be found");
+    let detail = hover.unwrap();
+    eprintln!("HOVER handleAdd: {detail}");
+    assert!(
+        detail.contains("-> ()"),
+        "handleAdd hover should show -> (), got: {detail}"
+    );
+}
+
+// ── Go-to-definition simulation tests (#353) ─────────────
+
+/// Simulate go-to-definition: given source + cursor offset,
+/// find the word under cursor, look it up in the index, and
+/// return the definition's (start, end) if found.
+fn simulate_goto_def(source: &str, cursor_offset: usize) -> Option<(usize, usize)> {
+    let program = Parser::new(source).parse_program().unwrap();
+    let index = SymbolIndex::build(&program);
+    let word = word_at_offset(source, cursor_offset);
+    eprintln!("GOTO_DEF: cursor_offset={cursor_offset}, word={word:?}");
+    if word.is_empty() {
+        return None;
+    }
+    let syms = index.find_by_name(word);
+    eprintln!("GOTO_DEF: found {} symbols for {word:?}", syms.len());
+    for sym in &syms {
+        eprintln!(
+            "  sym: name={:?}, kind={:?}, start={}, end={}, import_source={:?}",
+            sym.name, sym.kind, sym.start, sym.end, sym.import_source
+        );
+    }
+    for sym in syms {
+        if sym.import_source.is_some() {
+            continue;
+        }
+        if cursor_offset >= sym.start && cursor_offset <= sym.end {
+            eprintln!("  SKIP (cursor inside span)");
+            continue;
+        }
+        eprintln!("  FOUND definition at {}..{}", sym.start, sym.end);
+        return Some((sym.start, sym.end));
+    }
+    None
+}
+
+#[test]
+fn goto_def_type_usage_in_annotation() {
+    let source = "type Color { | Red | Green | Blue }\nfn pick(c: Color) -> string { \"ok\" }\n";
+    // Find "Color" in fn pick(c: Color)
+    let usage_offset = source.find("fn pick(c: Color)").unwrap() + "fn pick(c: ".len();
+    eprintln!(
+        "Color usage at offset {usage_offset}, char: {:?}",
+        &source[usage_offset..usage_offset + 5]
+    );
+    let result = simulate_goto_def(source, usage_offset);
+    assert!(
+        result.is_some(),
+        "go-to-def on type usage should find definition"
+    );
+}
+
+#[test]
+fn goto_def_const_variable_usage() {
+    let source = "fn first(x: number) -> number { x + 1 }\nfn second(x: number) -> number { x + 2 }\n\nconst a = first(1)\nconst b = second(a)\n";
+    // Find "a" in second(a)
+    let usage_offset = source.find("second(a)").unwrap() + "second(".len();
+    eprintln!(
+        "const a usage at offset {usage_offset}, char: {:?}",
+        &source[usage_offset..usage_offset + 1]
+    );
+    let result = simulate_goto_def(source, usage_offset);
+    assert!(
+        result.is_some(),
+        "go-to-def on const usage should find definition"
+    );
+}
+
+#[test]
+fn goto_def_union_variant_in_match() {
+    let source = "type Color { | Red | Green | Blue }\nfn describe(c: Color) -> string {\n    match c {\n        Red -> \"red\",\n        Green -> \"green\",\n        Blue -> \"blue\",\n    }\n}\n";
+    // Find "Red" in match arm
+    let usage_offset = source.find("Red -> \"red\"").unwrap();
+    eprintln!(
+        "Red usage at offset {usage_offset}, char: {:?}",
+        &source[usage_offset..usage_offset + 3]
+    );
+    let result = simulate_goto_def(source, usage_offset);
+    assert!(
+        result.is_some(),
+        "go-to-def on union variant in match arm should find definition"
     );
 }

@@ -9,6 +9,7 @@ pub(super) fn symbol_kind_to_completion(kind: SymbolKind) -> CompletionItemKind 
         SymbolKind::VARIABLE => CompletionItemKind::VARIABLE,
         SymbolKind::TYPE_PARAMETER => CompletionItemKind::CLASS,
         SymbolKind::ENUM_MEMBER => CompletionItemKind::ENUM_MEMBER,
+        SymbolKind::INTERFACE => CompletionItemKind::INTERFACE,
         _ => CompletionItemKind::TEXT,
     }
 }
@@ -69,6 +70,7 @@ impl SymbolIndex {
                         ConstBinding::Name(n) => n.clone(),
                         ConstBinding::Array(names) => format!("[{}]", names.join(", ")),
                         ConstBinding::Object(names) => format!("{{ {} }}", names.join(", ")),
+                        ConstBinding::Tuple(names) => format!("({})", names.join(", ")),
                     };
                     let vis = if decl.exported { "export " } else { "" };
                     let type_ann = decl
@@ -89,7 +91,9 @@ impl SymbolIndex {
 
                     // Also index destructured names
                     match &decl.binding {
-                        ConstBinding::Array(names) | ConstBinding::Object(names) => {
+                        ConstBinding::Array(names)
+                        | ConstBinding::Object(names)
+                        | ConstBinding::Tuple(names) => {
                             for n in names {
                                 symbols.push(Symbol {
                                     name: n.clone(),
@@ -123,7 +127,7 @@ impl SymbolIndex {
                     let ret = decl
                         .return_type
                         .as_ref()
-                        .map(|t| format!(": {}", type_expr_to_string(t)))
+                        .map(|t| format!(" -> {}", type_expr_to_string(t)))
                         .unwrap_or_default();
 
                     // Extract first param type for pipe-aware completions
@@ -202,6 +206,144 @@ impl SymbolIndex {
                         }
                     }
                 }
+                ItemKind::ForBlock(block) => {
+                    let type_str = type_expr_to_string(&block.type_name);
+                    for func in &block.functions {
+                        let params: Vec<String> = func
+                            .params
+                            .iter()
+                            .map(|p| {
+                                if p.name == "self" {
+                                    format!("self: {type_str}")
+                                } else if let Some(ty) = &p.type_ann {
+                                    format!("{}: {}", p.name, type_expr_to_string(ty))
+                                } else {
+                                    p.name.clone()
+                                }
+                            })
+                            .collect();
+                        let ret = func
+                            .return_type
+                            .as_ref()
+                            .map(|t| format!(" -> {}", type_expr_to_string(t)))
+                            .unwrap_or_default();
+
+                        // First param type is the for block's type (for self params)
+                        let first_param_type =
+                            if func.params.first().is_some_and(|p| p.name == "self") {
+                                Some(type_str.clone())
+                            } else {
+                                func.params
+                                    .first()
+                                    .and_then(|p| p.type_ann.as_ref())
+                                    .map(type_expr_to_string)
+                            };
+
+                        let return_type_str = func.return_type.as_ref().map(type_expr_to_string);
+
+                        symbols.push(Symbol {
+                            name: func.name.clone(),
+                            kind: SymbolKind::FUNCTION,
+                            start: block.span.start,
+                            end: block.span.end,
+                            import_source: None,
+                            detail: format!("fn {}({}){ret}", func.name, params.join(", "),),
+                            first_param_type,
+                            return_type_str,
+                        });
+
+                        // Index `self` parameter so hover works on it
+                        for param in &func.params {
+                            if param.name == "self" {
+                                symbols.push(Symbol {
+                                    name: "self".to_string(),
+                                    kind: SymbolKind::VARIABLE,
+                                    start: param.span.start,
+                                    end: param.span.end,
+                                    import_source: None,
+                                    detail: format!("self: {type_str}"),
+                                    first_param_type: None,
+                                    return_type_str: None,
+                                });
+                            } else {
+                                let type_ann = param
+                                    .type_ann
+                                    .as_ref()
+                                    .map(|t| format!(": {}", type_expr_to_string(t)))
+                                    .unwrap_or_default();
+                                symbols.push(Symbol {
+                                    name: param.name.clone(),
+                                    kind: SymbolKind::VARIABLE,
+                                    start: param.span.start,
+                                    end: param.span.end,
+                                    import_source: None,
+                                    detail: format!("parameter {}{type_ann}", param.name),
+                                    first_param_type: None,
+                                    return_type_str: None,
+                                });
+                            }
+                        }
+
+                        Self::collect_expr(&func.body, symbols);
+                    }
+                }
+                ItemKind::TraitDecl(decl) => {
+                    let vis = if decl.exported { "export " } else { "" };
+                    symbols.push(Symbol {
+                        name: decl.name.clone(),
+                        kind: SymbolKind::INTERFACE,
+                        start: item.span.start,
+                        end: item.span.end,
+                        import_source: None,
+                        detail: format!("{vis}trait {}", decl.name),
+                        first_param_type: None,
+                        return_type_str: None,
+                    });
+
+                    // Index trait methods
+                    for method in &decl.methods {
+                        let params: Vec<String> = method
+                            .params
+                            .iter()
+                            .map(|p| {
+                                if let Some(ty) = &p.type_ann {
+                                    format!("{}: {}", p.name, type_expr_to_string(ty))
+                                } else {
+                                    p.name.clone()
+                                }
+                            })
+                            .collect();
+                        let ret = method
+                            .return_type
+                            .as_ref()
+                            .map(|t| format!(" -> {}", type_expr_to_string(t)))
+                            .unwrap_or_default();
+
+                        symbols.push(Symbol {
+                            name: method.name.clone(),
+                            kind: SymbolKind::FUNCTION,
+                            start: method.span.start,
+                            end: method.span.end,
+                            import_source: None,
+                            detail: format!(
+                                "{}.fn {}({}){ret}",
+                                decl.name,
+                                method.name,
+                                params.join(", ")
+                            ),
+                            first_param_type: None,
+                            return_type_str: method.return_type.as_ref().map(type_expr_to_string),
+                        });
+
+                        // Recurse into default method bodies
+                        if let Some(body) = &method.body {
+                            Self::collect_expr(body, symbols);
+                        }
+                    }
+                }
+                ItemKind::TestBlock(_) => {
+                    // Test blocks don't contribute symbols
+                }
                 ItemKind::Expr(expr) => {
                     Self::collect_expr(expr, symbols);
                 }
@@ -218,25 +360,77 @@ impl SymbolIndex {
             ExprKind::Arrow { body, .. } => {
                 Self::collect_expr(body, symbols);
             }
-            ExprKind::If {
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                Self::collect_expr(then_branch, symbols);
-                if let Some(eb) = else_branch {
-                    Self::collect_expr(eb, symbols);
-                }
-            }
             ExprKind::Match { arms, .. } => {
                 for arm in arms {
                     Self::collect_expr(&arm.body, symbols);
                 }
             }
-            ExprKind::Return(Some(inner)) | ExprKind::Await(inner) | ExprKind::Grouped(inner) => {
+            ExprKind::Await(inner) | ExprKind::Grouped(inner) => {
                 Self::collect_expr(inner, symbols);
             }
             _ => {}
+        }
+    }
+
+    /// Add symbols for imported for-block functions from resolved imports.
+    /// These don't appear in the current file's AST but are defined via cross-file resolution.
+    pub(super) fn add_imported_for_blocks(
+        &mut self,
+        resolved_imports: &std::collections::HashMap<String, crate::resolve::ResolvedImports>,
+    ) {
+        for (source, resolved) in resolved_imports {
+            for block in &resolved.for_blocks {
+                let type_str = type_expr_to_string(&block.type_name);
+                for func in &block.functions {
+                    let params: Vec<String> = func
+                        .params
+                        .iter()
+                        .map(|p| {
+                            if p.name == "self" {
+                                format!("self: {type_str}")
+                            } else if let Some(ty) = &p.type_ann {
+                                format!("{}: {}", p.name, type_expr_to_string(ty))
+                            } else {
+                                p.name.clone()
+                            }
+                        })
+                        .collect();
+                    let ret = func
+                        .return_type
+                        .as_ref()
+                        .map(|t| format!(": {}", type_expr_to_string(t)))
+                        .unwrap_or_default();
+
+                    let first_param_type = if func.params.first().is_some_and(|p| p.name == "self")
+                    {
+                        Some(type_str.clone())
+                    } else {
+                        func.params
+                            .first()
+                            .and_then(|p| p.type_ann.as_ref())
+                            .map(type_expr_to_string)
+                    };
+
+                    let return_type_str = func.return_type.as_ref().map(type_expr_to_string);
+
+                    self.symbols.push(Symbol {
+                        name: func.name.clone(),
+                        kind: SymbolKind::FUNCTION,
+                        start: 0,
+                        end: 0,
+                        import_source: Some(source.clone()),
+                        detail: format!(
+                            "fn {}({}){} (from \"{}\")",
+                            func.name,
+                            params.join(", "),
+                            ret,
+                            source
+                        ),
+                        first_param_type,
+                        return_type_str,
+                    });
+                }
+            }
         }
     }
 
@@ -251,7 +445,9 @@ impl SymbolIndex {
 
 pub(super) fn type_expr_to_string(ty: &TypeExpr) -> String {
     match &ty.kind {
-        TypeExprKind::Named { name, type_args } => {
+        TypeExprKind::Named {
+            name, type_args, ..
+        } => {
             if type_args.is_empty() {
                 name.clone()
             } else {
@@ -280,7 +476,7 @@ pub(super) fn type_expr_to_string(ty: &TypeExpr) -> String {
         TypeExprKind::Array(inner) => format!("Array<{}>", type_expr_to_string(inner)),
         TypeExprKind::Tuple(parts) => {
             let ps: Vec<String> = parts.iter().map(type_expr_to_string).collect();
-            format!("[{}]", ps.join(", "))
+            format!("({})", ps.join(", "))
         }
     }
 }

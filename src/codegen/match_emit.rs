@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use crate::parser::ast::*;
 
-use super::Codegen;
+use super::{Codegen, TAG_FIELD, VALUE_FIELD};
+
+const THROW_NON_EXHAUSTIVE: &str = "(() => { throw new Error(\"non-exhaustive match\"); })()";
 
 impl Codegen {
     // ── Match Lowering ───────────────────────────────────────────
@@ -15,15 +17,16 @@ impl Codegen {
     fn emit_match_arms(&mut self, subject: &Expr, arms: &[MatchArm], index: usize) {
         if index >= arms.len() {
             // Should be unreachable if match is exhaustive
-            self.push("(() => { throw new Error(\"non-exhaustive match\"); })()");
+            self.push(THROW_NON_EXHAUSTIVE);
             return;
         }
 
         let arm = &arms[index];
         let is_last = index == arms.len() - 1;
 
-        // Wildcard or binding at the end → just emit the body
+        // Wildcard or binding at the end without a guard → just emit the body
         if is_last
+            && arm.guard.is_none()
             && matches!(
                 arm.pattern.kind,
                 PatternKind::Wildcard | PatternKind::Binding(_)
@@ -33,15 +36,68 @@ impl Codegen {
             return;
         }
 
-        self.emit_pattern_condition(subject, &arm.pattern);
-        self.push(" ? ");
-        self.emit_match_body(subject, &arm.pattern, &arm.body);
-        self.push(" : ");
+        // For guards with bindings, we need an IIFE so bindings are in scope
+        // for the guard expression
+        if let Some(guard) = &arm.guard {
+            let bindings = collect_bindings(
+                subject,
+                &arm.pattern,
+                &|s| self.expr_to_string(s),
+                &self.variant_info,
+            );
+            let has_bindings = !bindings.is_empty();
 
-        if is_last {
-            self.push("(() => { throw new Error(\"non-exhaustive match\"); })()");
+            if has_bindings {
+                // Emit pattern condition first, then IIFE for bindings + guard
+                self.emit_pattern_condition(subject, &arm.pattern);
+                self.push(" ? ");
+                self.push("(() => { ");
+                for (name, access) in &bindings {
+                    self.push(&format!("const {name} = {access}; "));
+                }
+                self.push("if (");
+                self.emit_expr(guard);
+                self.push(") { return ");
+                self.emit_expr(&arm.body);
+                self.push("; } ");
+                // Fall through to next arm (guard didn't match)
+                self.push("return ");
+                self.emit_match_arms(subject, arms, index + 1);
+                self.push("; })()");
+                // Ternary else: pattern didn't match at all
+                self.push(" : ");
+                self.emit_match_arms(subject, arms, index + 1);
+            } else {
+                // No bindings needed for guard - simpler inline condition
+                let is_trivial_pattern = matches!(
+                    arm.pattern.kind,
+                    PatternKind::Wildcard | PatternKind::Binding(_)
+                );
+                if !is_trivial_pattern {
+                    self.emit_pattern_condition(subject, &arm.pattern);
+                    self.push(" && ");
+                }
+                self.emit_expr(guard);
+                self.push(" ? ");
+                self.emit_match_body(subject, &arm.pattern, &arm.body);
+                self.push(" : ");
+                if is_last {
+                    self.push(THROW_NON_EXHAUSTIVE);
+                } else {
+                    self.emit_match_arms(subject, arms, index + 1);
+                }
+            }
         } else {
-            self.emit_match_arms(subject, arms, index + 1);
+            self.emit_pattern_condition(subject, &arm.pattern);
+            self.push(" ? ");
+            self.emit_match_body(subject, &arm.pattern, &arm.body);
+            self.push(" : ");
+
+            if is_last {
+                self.push(THROW_NON_EXHAUSTIVE);
+            } else {
+                self.emit_match_arms(subject, arms, index + 1);
+            }
         }
     }
 
@@ -64,20 +120,41 @@ impl Codegen {
                 self.push(")");
             }
             PatternKind::Variant { name, fields } => {
-                // Check tag
-                self.emit_expr(subject);
-                self.push(&format!(".tag === \"{}\"", name));
+                // Result types use { ok: true/false } instead of { tag: "Ok"/"Err" }
+                if name == "Ok" {
+                    self.emit_expr(subject);
+                    self.push(".ok === true");
+                } else if name == "Err" {
+                    self.emit_expr(subject);
+                    self.push(".ok === false");
+                } else {
+                    // Regular union variants use tag field
+                    self.emit_expr(subject);
+                    self.push(&format!(".{TAG_FIELD} === \"{}\"", name));
+                }
 
                 // Nested conditions for sub-patterns
+                let field_names = self
+                    .variant_info
+                    .get(name.as_str())
+                    .map(|(_, names)| names.clone());
                 for (i, field_pat) in fields.iter().enumerate() {
                     if !matches!(
                         field_pat.kind,
                         PatternKind::Wildcard | PatternKind::Binding(_)
                     ) {
                         self.push(" && ");
-                        // Access the field — for single-field variants use .value
-                        let field_access = if fields.len() == 1 {
-                            format!("{}.value", self.expr_to_string(subject))
+                        // Access the field using variant_info field names when available
+                        let field_access = if name == "Ok" && fields.len() == 1 {
+                            format!("{}.{VALUE_FIELD}", self.expr_to_string(subject))
+                        } else if name == "Err" && fields.len() == 1 {
+                            format!("{}.error", self.expr_to_string(subject))
+                        } else if let Some(ref names) = field_names
+                            && let Some(fname) = names.get(i)
+                        {
+                            format!("{}.{}", self.expr_to_string(subject), fname)
+                        } else if fields.len() == 1 {
+                            format!("{}.{VALUE_FIELD}", self.expr_to_string(subject))
                         } else {
                             format!("{}._{i}", self.expr_to_string(subject))
                         };
@@ -114,6 +191,81 @@ impl Codegen {
                     self.push("true");
                 }
             }
+            PatternKind::Tuple(patterns) => {
+                let mut first = true;
+                for (i, pat) in patterns.iter().enumerate() {
+                    if matches!(pat.kind, PatternKind::Wildcard | PatternKind::Binding(_)) {
+                        continue;
+                    }
+                    if !first {
+                        self.push(" && ");
+                    }
+                    first = false;
+                    let elem_expr = Expr {
+                        kind: ExprKind::Identifier(format!(
+                            "{}[{}]",
+                            self.expr_to_string(subject),
+                            i
+                        )),
+                        span: subject.span,
+                    };
+                    self.emit_pattern_condition(&elem_expr, pat);
+                }
+                if first {
+                    self.push("true");
+                }
+            }
+            PatternKind::StringPattern { segments } => {
+                // Emit: subject.match(/^...regex...$/)
+                self.emit_expr(subject);
+                self.push(".match(/^");
+                for segment in segments {
+                    match segment {
+                        StringPatternSegment::Literal(s) => {
+                            self.push(&escape_regex(s));
+                        }
+                        StringPatternSegment::Capture(_) => {
+                            self.push("([^/]+)");
+                        }
+                    }
+                }
+                self.push("$/)")
+            }
+            PatternKind::Array { elements, rest } => {
+                let subj_str = self.expr_to_string(subject);
+                if elements.is_empty() && rest.is_none() {
+                    // Empty array: `[]` → subject.length === 0
+                    self.push(&format!("{subj_str}.length === 0"));
+                } else if rest.is_some() {
+                    // With rest: `[a, b, ..rest]` → subject.length >= elements.len()
+                    self.push(&format!("{subj_str}.length >= {}", elements.len()));
+                    // Add conditions for non-trivial element patterns
+                    for (i, pat) in elements.iter().enumerate() {
+                        if !matches!(pat.kind, PatternKind::Wildcard | PatternKind::Binding(_)) {
+                            self.push(" && ");
+                            let elem_expr = Expr {
+                                kind: ExprKind::Identifier(format!("{subj_str}[{i}]")),
+                                span: subject.span,
+                            };
+                            self.emit_pattern_condition(&elem_expr, pat);
+                        }
+                    }
+                } else {
+                    // Exact length: `[a, b]` → subject.length === elements.len()
+                    self.push(&format!("{subj_str}.length === {}", elements.len()));
+                    // Add conditions for non-trivial element patterns
+                    for (i, pat) in elements.iter().enumerate() {
+                        if !matches!(pat.kind, PatternKind::Wildcard | PatternKind::Binding(_)) {
+                            self.push(" && ");
+                            let elem_expr = Expr {
+                                kind: ExprKind::Identifier(format!("{subj_str}[{i}]")),
+                                span: subject.span,
+                            };
+                            self.emit_pattern_condition(&elem_expr, pat);
+                        }
+                    }
+                }
+            }
             PatternKind::Binding(_) | PatternKind::Wildcard => {
                 self.push("true");
             }
@@ -121,6 +273,56 @@ impl Codegen {
     }
 
     fn emit_match_body(&mut self, subject: &Expr, pattern: &Pattern, body: &Expr) {
+        // String patterns need special handling: extract captures from regex match
+        if let PatternKind::StringPattern { segments } = &pattern.kind {
+            let captures: Vec<&str> = segments
+                .iter()
+                .filter_map(|seg| match seg {
+                    StringPatternSegment::Capture(name) => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect();
+
+            if captures.is_empty() && !matches!(body.kind, ExprKind::Block(_)) {
+                self.emit_expr(body);
+                return;
+            }
+
+            self.push("(() => { const _m = ");
+            self.emit_expr(subject);
+            self.push(".match(/^");
+            for segment in segments {
+                match segment {
+                    StringPatternSegment::Literal(s) => {
+                        self.push(&escape_regex(s));
+                    }
+                    StringPatternSegment::Capture(_) => {
+                        self.push("([^/]+)");
+                    }
+                }
+            }
+            self.push("$/); ");
+
+            for (i, name) in captures.iter().enumerate() {
+                self.push(&format!("const {} = _m![{}]; ", name, i + 1));
+            }
+
+            if matches!(body.kind, ExprKind::Block(_)) {
+                if let ExprKind::Block(items) = &body.kind {
+                    for item in items {
+                        self.emit_item(item);
+                        self.push(" ");
+                    }
+                }
+            } else {
+                self.push("return ");
+                self.emit_expr(body);
+                self.push(";");
+            }
+            self.push(" })()");
+            return;
+        }
+
         // For patterns with bindings, wrap in an IIFE to introduce variables
         let bindings = collect_bindings(
             subject,
@@ -189,12 +391,17 @@ fn collect_bindings_inner(
             // Look up field names from variant definition
             let field_names = variant_info.get(name.as_str()).map(|(_, names)| names);
             for (i, field_pat) in fields.iter().enumerate() {
-                let field_access = if let Some(names) = field_names
+                // Result types: Ok(v) -> .value, Err(e) -> .error
+                let field_access = if name == "Ok" && fields.len() == 1 {
+                    format!("{}.{VALUE_FIELD}", expr_to_str(subject))
+                } else if name == "Err" && fields.len() == 1 {
+                    format!("{}.error", expr_to_str(subject))
+                } else if let Some(names) = field_names
                     && let Some(fname) = names.get(i)
                 {
                     format!("{}.{}", expr_to_str(subject), fname)
                 } else if fields.len() == 1 {
-                    format!("{}.value", expr_to_str(subject))
+                    format!("{}.{VALUE_FIELD}", expr_to_str(subject))
                 } else {
                     format!("{}._{i}", expr_to_str(subject))
                 };
@@ -215,6 +422,51 @@ fn collect_bindings_inner(
                 collect_bindings_inner(&field_expr, pat, expr_to_str, variant_info, bindings);
             }
         }
+        PatternKind::Tuple(patterns) => {
+            for (i, pat) in patterns.iter().enumerate() {
+                let elem_access = format!("{}[{}]", expr_to_str(subject), i);
+                let elem_expr = Expr {
+                    kind: ExprKind::Identifier(elem_access),
+                    span: subject.span,
+                };
+                collect_bindings_inner(&elem_expr, pat, expr_to_str, variant_info, bindings);
+            }
+        }
+        PatternKind::Array { elements, rest } => {
+            for (i, pat) in elements.iter().enumerate() {
+                let elem_access = format!("{}[{}]", expr_to_str(subject), i);
+                let elem_expr = Expr {
+                    kind: ExprKind::Identifier(elem_access),
+                    span: subject.span,
+                };
+                collect_bindings_inner(&elem_expr, pat, expr_to_str, variant_info, bindings);
+            }
+            if let Some(name) = rest
+                && name != "_"
+            {
+                let rest_access = format!("{}.slice({})", expr_to_str(subject), elements.len());
+                bindings.push((name.clone(), rest_access));
+            }
+        }
+        PatternKind::StringPattern { .. } => {
+            // String pattern bindings are handled directly in emit_match_body
+        }
         PatternKind::Wildcard | PatternKind::Literal(_) | PatternKind::Range { .. } => {}
     }
+}
+
+/// Escape special regex characters in a literal string segment.
+fn escape_regex(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' | '/' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$'
+            | '|' => {
+                result.push('\\');
+                result.push(ch);
+            }
+            _ => result.push(ch),
+        }
+    }
+    result
 }

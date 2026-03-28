@@ -30,7 +30,21 @@ const { name, age } = getUser()
 
 ```floe
 fn add(a: number, b: number) -> number {
-  return a + b
+  a + b
+}
+```
+
+The last expression in a function body is the return value. The `return` keyword is not used in Floe.
+
+In multi-statement functions, `floe fmt` adds a blank line before the final expression to visually separate the return value:
+
+```floe
+fn loadProfile(id: string) -> Result<Profile, ApiError> {
+    const user = fetchUser(id)?
+    const posts = fetchPosts(user.id)?
+    const stats = computeStats(posts)
+
+    Profile(user, posts, stats)
 }
 ```
 
@@ -38,7 +52,7 @@ Exported functions **must** have return type annotations:
 
 ```floe
 export fn greet(name: string) -> string {
-  return `Hello, ${name}!`
+  `Hello, ${name}!`
 }
 ```
 
@@ -46,18 +60,18 @@ export fn greet(name: string) -> string {
 
 ```floe
 fn greet(name: string = "world") -> string {
-  return `Hello, ${name}!`
+  `Hello, ${name}!`
 }
 ```
 
-### Anonymous Functions (Lambdas)
+### Anonymous Functions (Closures)
 
-Use `|x|` for inline anonymous functions:
+Use `(x) => expr` for inline anonymous functions:
 
 ```floe
-todos |> Array.map(|t| t.text)
-items |> Array.reduce(|acc, x| acc + x.price, 0)
-onClick={|| setCount(count + 1)}
+todos |> Array.map((t) => t.text)
+items |> Array.reduce((acc, x) => acc + x.price, 0)
+onClick={() => setCount(count + 1)}
 ```
 
 For simple field access, use dot shorthand:
@@ -68,11 +82,11 @@ todos |> Array.map(.text)
 users |> Array.sortBy(.name)
 ```
 
-**`const name = |x| ...` is a compile error.** If it has a name, use `fn`:
+**`const name = (x) => ...` is a compile error.** If it has a name, use `fn`:
 
 ```floe
 // COMPILE ERROR
-const double = |x| x * 2
+const double = (x) => x * 2
 
 // correct
 fn double(x: number) -> number { x * 2 }
@@ -80,12 +94,12 @@ fn double(x: number) -> number { x * 2 }
 
 ### Function Types
 
-Use `->` to describe function types:
+Use `=>` to describe function types:
 
 ```floe
-type Transform = (string) -> number
-type Predicate = (Todo) -> bool
-type Callback = () -> ()
+type Transform = (string) => number
+type Predicate = (Todo) => boolean
+type Callback = () => ()
 ```
 
 ### Async Functions
@@ -93,16 +107,46 @@ type Callback = () -> ()
 ```floe
 async fn fetchUser(id: string) -> Promise<User> {
   const response = await fetch(`/api/users/${id}`)
-  return await response.json()
+  await response.json()
 }
 ```
 
+## Callback Flattening with `use`
+
+The `use` keyword flattens nested callbacks. The rest of the block becomes the callback body:
+
+```floe
+// Without use — deeply nested
+File.open(path, fn(file)
+    File.readAll(file, fn(contents)
+        contents |> String.toUpper
+    )
+)
+
+// With use — flat and readable
+use file <- File.open(path)
+use contents <- File.readAll(file)
+contents |> String.toUpper
+```
+
+Zero-binding form for callbacks that don't pass a value:
+
+```floe
+use <- Timer.delay(1000)
+Console.log("step 1")
+use <- Timer.delay(500)
+Console.log("done")
+```
+
+`use` works with any function whose last parameter is a callback. It's complementary to `?` (which only works on Result/Option).
+
 ## What's Not Here
 
-- **No `let` or `var`** — all bindings are `const`
-- **No `class`** — use functions and records
-- **No `this`** — functions are pure by default
-- **No `function*` generators** — use arrays and pipes
-- **No `=>`** — use `|x|` for lambdas, `->` for types and match arms
+- **No `let` or `var`** - all bindings are `const`
+- **No `class`** - use functions and records
+- **No `this`** - functions are pure by default
+- **No `function*` generators** - use arrays and pipes
+- **No `=>` in expressions** - use `fn(x)` for closures; `=>` is only for function types like `(T) => U`
+- **No `function` keyword** - use `fn` for named functions
 
 These are removed intentionally. See the [comparison](/guide/comparison) for the reasoning.

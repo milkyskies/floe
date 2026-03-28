@@ -57,7 +57,7 @@ feature/#1.lexer → main                        ← one final PR
 ```
 
 **Epic workflow:**
-1. Create the epic branch: `git worktree add ../zenscript-worktrees/<epic-num> -b feature/#<num>.<summary> main`
+1. Create the epic branch: `git worktree add ../floe-worktrees/<epic-num> -b feature/#<num>.<summary> main`
 2. **Immediately create the epic PR** (even if empty) so progress is visible:
    ```bash
    gh pr create --title "[Epic] [#<epic-num>] <epic title>" \
@@ -104,8 +104,8 @@ git checkout main && git pull
 Each task gets its own isolated worktree. See `.claude/rules/worktrees.md` for the full workflow.
 
 ```bash
-git worktree add ../zenscript-worktrees/<num> -b feature/#<num>.<summary> main
-cd ../zenscript-worktrees/<num>
+git worktree add ../floe-worktrees/<num> -b feature/#<num>.<summary> main
+cd ../floe-worktrees/<num>
 ```
 
 Do all work - editing, building, testing, committing - from inside this directory.
@@ -115,7 +115,7 @@ Do all work - editing, building, testing, committing - from inside this director
 Before touching any file or running any command, confirm you are in the right place:
 
 ```bash
-pwd                       # must be .../zenscript-worktrees/<num>
+pwd                       # must be .../floe-worktrees/<num>
 git branch --show-current # must be your issue branch
 ```
 
@@ -129,9 +129,13 @@ glb update <num> --claim
 
 Commit semi-frequently - don't save everything for one giant commit. Use **conventional commits** (`feat:`, `fix:`, `chore:`, `docs:`, `ci:`, `refactor:`, `test:`). Append `!` for breaking changes (e.g. `feat!:`). These prefixes drive automatic version bumps and changelog generation via release-please.
 
+**Before every commit**, run `cargo fmt` (and `floe fmt` if you touched `.fl` files). Never commit unformatted code.
+
 ### 4. Quality Gate
 
 Run before closing any task, scoped to what you changed.
+
+**Rust quality gate** (if you changed `src/**/*.rs`):
 
 ```bash
 cargo fmt
@@ -142,6 +146,24 @@ RUSTFLAGS="-D warnings" cargo test
 **All warnings are errors.** Clippy uses `-D warnings`; tests use `RUSTFLAGS="-D warnings"`. Fix warnings before proceeding.
 
 Order: fmt -> clippy -> test.
+
+**Floe example quality gate** (if you changed `src/**/*.rs` or `examples/**/*.fl`):
+
+```bash
+floe fmt examples/todo-app/src/ examples/store/src/
+floe check examples/todo-app/src/ examples/store/src/
+floe build examples/todo-app/src/ examples/store/src/
+```
+
+Order: fmt -> check -> build. All must pass with zero errors.
+
+**LSP integration tests** (if you changed LSP, checker, or language syntax):
+
+```bash
+python3 scripts/test-lsp.py ./target/debug/floe
+```
+
+All tests must pass (0 failures).
 
 ### 5. PR (do NOT merge)
 
@@ -181,7 +203,7 @@ After creating the PR, tell the user the PR URL and ask them to review and merge
 glb close <num>
 
 # Back in the main repo directory:
-git worktree remove ../zenscript-worktrees/<num>
+git worktree remove ../floe-worktrees/<num>
 git pull
 ```
 

@@ -44,24 +44,70 @@ async fn name() -> Promise<T> {
 
 ```floe
 // Record
-type User = {
+type User {
   name: string,
   email: string,
 }
 
 // Union
-type Shape =
-  | Circle(radius: number)
-  | Rectangle(width: number, height: number)
+type Shape {
+  | Circle { radius: number }
+  | Rectangle { width: number, height: number }
+}
+
+// Newtype (single-value wrapper)
+type OrderId { number }
+
+// String literal union (for npm interop)
+type HttpMethod = "GET" | "POST" | "PUT" | "DELETE"
 
 // Alias
 type Name = string
 
-// Brand
-type UserId = Brand<string, "UserId">
+// Newtype
+type UserId { string }
 
 // Opaque
 opaque type Email = string
+
+// Deriving traits
+type Point {
+  x: number,
+  y: number,
+} deriving (Display)
+```
+
+### Use (Callback Flattening)
+
+```floe
+// Single binding — rest of block becomes callback body
+use x <- doSomething(arg)
+doStuff(x)
+
+// Zero binding
+use <- delay(1000)
+Console.log("done")
+
+// Chaining
+use a <- first()
+use b <- second(a)
+result(b)
+```
+
+### For Block
+
+```floe
+for Type {
+  fn method(self) -> ReturnType {
+    body
+  }
+}
+
+for Array<User> {
+  fn adults(self) -> Array<User> {
+    self |> Array.filter(.age >= 18)
+  }
+}
 ```
 
 ## Expressions
@@ -71,12 +117,17 @@ opaque type Email = string
 ```floe
 42              // number
 3.14            // number
+1_000_000       // number with separators (underscores for readability)
+3.141_592       // float with separators
+0xFF_FF         // hex with separators
 "hello"         // string
 `hello ${name}` // template literal
-true            // bool
-false           // bool
+true            // boolean
+false           // boolean
 [1, 2, 3]      // array
 ```
+
+Underscores in number literals are purely visual — they are stripped during compilation. They can appear between any two digits but not at the start, end, or adjacent to a decimal point.
 
 ### Operators
 
@@ -95,6 +146,7 @@ expr?                                         // unwrap
 value |> transform
 value |> f(other_arg, _)   // placeholder
 a |> b |> c                // chaining
+value |> match { ... }     // pipe into match
 ```
 
 ### Match
@@ -102,21 +154,18 @@ a |> b |> c                // chaining
 ```floe
 match expr {
   pattern -> body,
+  pattern when guard -> body,
+  _ -> default,
+}
+
+// Pipe into match
+expr |> match {
   pattern -> body,
   _ -> default,
 }
 ```
 
-### If/Else
-
-```floe
-if condition {
-  then_expr
-} else {
-  else_expr
-}
-```
-
+Patterns: literals (`42`, `"hello"`, `true`), ranges (`1..10`), variants (`Ok(x)`), records (`{ x, y }`), string patterns (`"/users/{id}"`), bindings (`x`), wildcard (`_`).
 ### Function Call
 
 ```floe
@@ -126,7 +175,18 @@ Constructor(a: 1)  // record constructor
 Constructor(..existing, a: 2)  // spread + update
 ```
 
-### Built-in Constructors
+### Collect Block
+
+```floe
+collect {
+    const name = validateName(input.name)?
+    const email = validateEmail(input.email)?
+    ValidForm(name, email)
+}
+// Returns Result<T, Array<E>> — accumulates all errors from ?
+```
+
+### Constructors
 
 ```floe
 Ok(value)     // Result success
@@ -135,28 +195,49 @@ Some(value)   // Option present
 None          // Option absent
 ```
 
-### Anonymous Functions (Lambdas)
+### Builtins
 
 ```floe
-|a, b| a + b
-|x| x * 2
-|| doSomething()
+todo                              // placeholder, type never, emits warning
+unreachable                       // assert unreachable, type never
+parse<T>(value)                   // runtime type validation, returns Result<T, Error>
+json |> parse<User>?              // pipe form (most common)
+data |> parse<Array<Product>>?    // validates arrays
+```
+
+### Qualified Variants
+
+```floe
+Filter.All              // zero-arg variant
+Filter.Active           // zero-arg variant
+Color.Blue(hex: "#00f") // variant with data
+
+// Required when variant name is ambiguous (exists in multiple unions)
+// Ok, Err, Some, None are always bare (built-in)
+```
+
+### Anonymous Functions (Closures)
+
+```floe
+(a, b) => a + b
+(x) => x * 2
+() => doSomething()
 ```
 
 Dot shorthand for field access:
 
 ```floe
-.name           // |x| x.name
-.id != id       // |x| x.id != id
-.done == false  // |x| x.done == false
+.name           // (x) => x.name
+.id != id       // (x) => x.id != id
+.done == false  // (x) => x.done == false
 ```
 
 ### Function Types
 
 ```floe
-() -> ()                  // takes nothing, returns nothing
-(string) -> number        // takes string, returns number
-(number, number) -> bool  // takes two numbers, returns bool
+() => ()                    // takes nothing, returns nothing
+(string) => number          // takes string, returns number
+(number, number) => boolean    // takes two numbers, returns boolean
 ```
 
 ### JSX
@@ -174,6 +255,13 @@ Dot shorthand for field access:
 import { name } from "module"
 import { name as alias } from "module"
 import { a, b, c } from "module"
+
+// Import for-block functions by type
+import { for User } from "./helpers"
+import { for Array, for Map } from "./collections"
+
+// Mix regular and for-imports
+import { Todo, Filter, for Array } from "./todo"
 ```
 
 ## Patterns

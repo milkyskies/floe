@@ -7,7 +7,7 @@ use crate::parser::ast::TypeDef;
 /// Internal type representation used by the checker.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
-    /// Primitive types: number, string, bool
+    /// Primitive types: number, string, boolean
     Number,
     String,
     Bool,
@@ -15,11 +15,6 @@ pub enum Type {
     Undefined,
     /// A named/user-defined type
     Named(String),
-    /// Brand type: distinct at compile time, erases to base at runtime
-    Brand {
-        base: Box<Type>,
-        tag: String,
-    },
     /// Opaque type: only the defining module can construct/destructure
     Opaque {
         name: String,
@@ -39,6 +34,15 @@ pub enum Type {
     },
     /// Array type
     Array(Box<Type>),
+    /// Map type: Map<K, V>
+    Map {
+        key: Box<Type>,
+        value: Box<Type>,
+    },
+    /// Set type: Set<T>
+    Set {
+        element: Box<Type>,
+    },
     /// Tuple type
     Tuple(Vec<Type>),
     /// Record/struct type
@@ -48,12 +52,19 @@ pub enum Type {
         name: String,
         variants: Vec<(String, Vec<Type>)>,
     },
+    /// String literal union: `"GET" | "POST" | "PUT" | "DELETE"`
+    StringLiteralUnion {
+        name: String,
+        variants: Vec<String>,
+    },
     /// Type variable (for inference)
     Var(usize),
     /// The unknown/any escape hatch
     Unknown,
     /// Unit type () — replaces void, a real value usable in generics
     Unit,
+    /// The never type — used for `todo` and `unreachable`, compatible with any type
+    Never,
 }
 
 impl Type {
@@ -73,10 +84,9 @@ impl Type {
         match self {
             Type::Number => "number".to_string(),
             Type::String => "string".to_string(),
-            Type::Bool => "bool".to_string(),
+            Type::Bool => "boolean".to_string(),
             Type::Undefined => "undefined".to_string(),
             Type::Named(n) => n.clone(),
-            Type::Brand { tag, .. } => tag.clone(),
             Type::Opaque { name, .. } => name.clone(),
             Type::Result { ok, err } => {
                 format!("Result<{}, {}>", ok.display_name(), err.display_name())
@@ -90,9 +100,13 @@ impl Type {
                 format!("({}) -> {}", p.join(", "), return_type.display_name())
             }
             Type::Array(inner) => format!("Array<{}>", inner.display_name()),
+            Type::Map { key, value } => {
+                format!("Map<{}, {}>", key.display_name(), value.display_name())
+            }
+            Type::Set { element } => format!("Set<{}>", element.display_name()),
             Type::Tuple(types) => {
                 let t: Vec<_> = types.iter().map(|t| t.display_name()).collect();
-                format!("[{}]", t.join(", "))
+                format!("({})", t.join(", "))
             }
             Type::Record(fields) => {
                 let f: Vec<_> = fields
@@ -102,9 +116,11 @@ impl Type {
                 format!("{{ {} }}", f.join(", "))
             }
             Type::Union { name, .. } => name.clone(),
+            Type::StringLiteralUnion { name, .. } => name.clone(),
             Type::Var(id) => format!("?T{id}"),
             Type::Unknown => "unknown".to_string(),
             Type::Unit => "()".to_string(),
+            Type::Never => "never".to_string(),
         }
     }
 }
@@ -118,6 +134,8 @@ pub(crate) struct TypeEnv {
     pub(crate) scopes: Vec<HashMap<String, Type>>,
     /// Type declarations: type name -> TypeDef + metadata
     type_defs: HashMap<String, TypeInfo>,
+    /// Trait bounds on type parameters: param name -> [trait names]
+    type_param_bounds: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -134,6 +152,7 @@ impl TypeEnv {
         Self {
             scopes: vec![HashMap::new()],
             type_defs: HashMap::new(),
+            type_param_bounds: HashMap::new(),
         }
     }
 
@@ -151,6 +170,20 @@ impl TypeEnv {
         }
     }
 
+    /// Define a name in the parent scope (second-to-last), used to update
+    /// function types after inferring the return type from the body.
+    pub(crate) fn define_in_parent_scope(&mut self, name: &str, ty: Type) {
+        let len = self.scopes.len();
+        if len >= 2 {
+            self.scopes[len - 2].insert(name.to_string(), ty);
+        }
+    }
+
+    /// Check if a name is already defined in any scope.
+    pub(crate) fn is_defined_in_any_scope(&self, name: &str) -> bool {
+        self.scopes.iter().any(|scope| scope.contains_key(name))
+    }
+
     pub(crate) fn lookup(&self, name: &str) -> Option<&Type> {
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.get(name) {
@@ -166,5 +199,67 @@ impl TypeEnv {
 
     pub(crate) fn lookup_type(&self, name: &str) -> Option<&TypeInfo> {
         self.type_defs.get(name)
+    }
+
+    /// Define trait bounds for a type parameter.
+    pub(crate) fn define_type_param_bounds(&mut self, name: &str, bounds: Vec<String>) {
+        self.type_param_bounds.insert(name.to_string(), bounds);
+    }
+
+    /// Resolve a `Type::Named("Foo")` to its concrete type by looking up the type definition.
+    /// For records, returns `Type::Record(fields)`. For unions, returns `Type::Union`.
+    /// For aliases, follows the chain. Primitives and non-Named types pass through unchanged.
+    pub(crate) fn resolve_to_concrete(
+        &self,
+        ty: &Type,
+        resolve_type_fn: &dyn Fn(&crate::parser::ast::TypeExpr) -> Type,
+    ) -> Type {
+        match ty {
+            Type::Named(name) => {
+                if let Some(info) = self.lookup_type(name) {
+                    match &info.def {
+                        crate::parser::ast::TypeDef::Record(entries) => {
+                            let field_types: Vec<_> = entries
+                                .iter()
+                                .filter_map(|e| e.as_field())
+                                .map(|f| (f.name.clone(), resolve_type_fn(&f.type_ann)))
+                                .collect();
+                            Type::Record(field_types)
+                        }
+                        crate::parser::ast::TypeDef::Union(variants) => {
+                            let var_types: Vec<_> = variants
+                                .iter()
+                                .map(|v| {
+                                    let field_types: Vec<_> = v
+                                        .fields
+                                        .iter()
+                                        .map(|f| resolve_type_fn(&f.type_ann))
+                                        .collect();
+                                    (v.name.clone(), field_types)
+                                })
+                                .collect();
+                            Type::Union {
+                                name: name.clone(),
+                                variants: var_types,
+                            }
+                        }
+                        crate::parser::ast::TypeDef::StringLiteralUnion(variants) => {
+                            Type::StringLiteralUnion {
+                                name: name.clone(),
+                                variants: variants.clone(),
+                            }
+                        }
+                        crate::parser::ast::TypeDef::Alias(type_expr) => {
+                            let resolved = resolve_type_fn(type_expr);
+                            // Follow alias chains
+                            self.resolve_to_concrete(&resolved, resolve_type_fn)
+                        }
+                    }
+                } else {
+                    ty.clone()
+                }
+            }
+            _ => ty.clone(),
+        }
     }
 }

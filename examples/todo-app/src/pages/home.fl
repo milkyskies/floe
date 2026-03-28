@@ -1,61 +1,19 @@
-import { useState } from "react"
-import { v4 } from "uuid"
-
-type Todo = {
-    id: string,
-    text: string,
-    done: bool,
-}
-
-type Filter =
-    | All
-    | Active
-    | Completed
-
-type Validation =
-    | Valid(text: string)
-    | TooShort
-    | TooLong
-    | Empty
-
-fn validate(text: string) -> Validation {
-    const trimmed = text |> String.trim
-    const len = trimmed |> String.length
-    match len {
-        0 -> Empty,
-        1 -> TooShort,
-        _ -> match len > 100 {
-            true -> TooLong,
-            false -> Valid(trimmed),
-        },
-    }
-}
-
-fn filterTodos(todos: Array<Todo>, filter: Filter) -> Array<Todo> {
-    match filter {
-        All -> todos,
-        Active -> todos |> Array.filter(.done == false),
-        Completed -> todos |> Array.filter(.done == true),
-    }
-}
-
-fn countRemaining(todos: Array<Todo>) -> number {
-    todos
-        |> Array.filter(.done == false)
-        |> Array.length
-}
+import trusted { useState } from "react"
+import trusted { v4 } from "uuid"
+import { Todo, Filter, Validation } from "../types"
+import { for string, for Array } from "../todo"
 
 export fn HomePage() -> JSX.Element {
-    const [todos, setTodos] = useState([])
+    const [todos, setTodos] = useState<Array<Todo>>([])
     const [input, setInput] = useState("")
-    const [filter, setFilter] = useState(All)
+    const [filter, setFilter] = useState<Filter>(All)
     const [error, setError] = useState("")
 
-    const visible = filterTodos(todos, filter)
-    const remaining = countRemaining(todos)
+    const visible = todos |> filterBy(filter)
+    const remainingCount = todos |> remaining
 
     fn handleAdd() {
-        match validate(input) {
+        match input |> validate {
             Empty -> setError("Please enter a todo"),
             TooShort -> setError("Todo must be at least 2 characters"),
             TooLong -> setError("Todo must be under 100 characters"),
@@ -68,7 +26,7 @@ export fn HomePage() -> JSX.Element {
     }
 
     fn handleToggle(id: string) {
-        setTodos(todos |> Array.map(|t|
+        setTodos(todos |> map((t) =>
             match t.id == id {
                 true -> Todo(..t, done: !t.done),
                 false -> t,
@@ -77,18 +35,18 @@ export fn HomePage() -> JSX.Element {
     }
 
     fn handleDelete(id: string) {
-        setTodos(todos |> Array.filter(.id != id))
+        setTodos(todos |> filter(.id != id))
     }
 
-    return <div>
+    <div>
         <h1 className="text-3xl font-bold mb-6">Todos</h1>
 
         <div className="flex gap-2 mb-4">
             <input
                 type="text"
                 value={input}
-                onChange={|e| setInput(e.target.value)}
-                onKeyDown={|e| match e.key {
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => match e.key {
                     "Enter" -> handleAdd(),
                     _ -> (),
                 }}
@@ -110,7 +68,7 @@ export fn HomePage() -> JSX.Element {
 
         <div className="flex gap-2 mb-6">
             <button
-                onClick={|| setFilter(All)}
+                onClick={() => setFilter(All)}
                 className={match filter {
                     All -> "rounded-full px-3 py-1 text-sm font-medium bg-indigo-600 text-white",
                     _ -> "rounded-full px-3 py-1 text-sm font-medium bg-zinc-800 text-zinc-400 hover:text-zinc-100",
@@ -119,7 +77,7 @@ export fn HomePage() -> JSX.Element {
                 All
             </button>
             <button
-                onClick={|| setFilter(Active)}
+                onClick={() => setFilter(Active)}
                 className={match filter {
                     Active -> "rounded-full px-3 py-1 text-sm font-medium bg-indigo-600 text-white",
                     _ -> "rounded-full px-3 py-1 text-sm font-medium bg-zinc-800 text-zinc-400 hover:text-zinc-100",
@@ -128,7 +86,7 @@ export fn HomePage() -> JSX.Element {
                 Active
             </button>
             <button
-                onClick={|| setFilter(Completed)}
+                onClick={() => setFilter(Completed)}
                 className={match filter {
                     Completed -> "rounded-full px-3 py-1 text-sm font-medium bg-indigo-600 text-white",
                     _ -> "rounded-full px-3 py-1 text-sm font-medium bg-zinc-800 text-zinc-400 hover:text-zinc-100",
@@ -139,28 +97,28 @@ export fn HomePage() -> JSX.Element {
         </div>
 
         <ul className="space-y-2">
-            {visible |> Array.map(|todo|
-                <li key={todo.id} className="flex items-center gap-3 rounded-lg bg-zinc-800/50 px-4 py-3">
+            {visible |> map((item) =>
+                <li key={item.id} className="flex items-center gap-3 rounded-lg bg-zinc-800/50 px-4 py-3">
                     <button
-                        onClick={|| handleToggle(todo.id)}
-                        className={match todo.done {
+                        onClick={() => handleToggle(item.id)}
+                        className={match item.done {
                             true -> "h-5 w-5 rounded-full border-2 border-indigo-500 bg-indigo-500 flex items-center justify-center",
                             false -> "h-5 w-5 rounded-full border-2 border-zinc-600",
                         }}
                     >
-                        {match todo.done {
+                        {match item.done {
                             true -> <span className="text-white text-xs">✓</span>,
                             false -> <span />,
                         }}
                     </button>
-                    <span className={match todo.done {
+                    <span className={match item.done {
                         true -> "flex-1 text-zinc-500 line-through",
                         false -> "flex-1 text-zinc-100",
                     }}>
-                        {todo.text}
+                        {item.text}
                     </span>
                     <button
-                        onClick={|| handleDelete(todo.id)}
+                        onClick={() => handleDelete(item.id)}
                         className="text-zinc-600 hover:text-red-400 transition-colors"
                     >
                         ✕
@@ -170,7 +128,7 @@ export fn HomePage() -> JSX.Element {
         </ul>
 
         <p className="mt-6 text-sm text-zinc-500">
-            {`${remaining} item(s) remaining`}
+            {`${remainingCount} item(s) remaining`}
         </p>
     </div>
 }

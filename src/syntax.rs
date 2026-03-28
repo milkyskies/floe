@@ -29,8 +29,15 @@ pub enum SyntaxKind {
     KW_OPAQUE,
     KW_ASYNC,
     KW_AWAIT,
-    KW_IF,
-    KW_ELSE,
+    KW_FOR,
+    KW_SELF,
+    KW_TRY,
+    KW_TRAIT,
+    KW_ASSERT,
+    KW_WHEN,
+    KW_COLLECT,
+    KW_DERIVING,
+    KW_USE,
 
     // Built-in constructors
     KW_OK,
@@ -38,14 +45,21 @@ pub enum SyntaxKind {
     KW_SOME,
     KW_NONE,
 
+    // Built-in expressions
+    KW_PARSE,
+    KW_TODO,
+    KW_UNREACHABLE,
+
     // Operators
     PIPE,          // |>
     THIN_ARROW,    // ->
+    LEFT_ARROW,    // <-
     FAT_ARROW,     // =>
     VERT_BAR,      // |
     QUESTION,      // ?
     UNDERSCORE,    // _
     DOT_DOT,       // ..
+    DOT_DOT_DOT,   // ...
     PLUS,          // +
     MINUS,         // -
     STAR,          // *
@@ -89,13 +103,22 @@ pub enum SyntaxKind {
     PROGRAM,
     IMPORT_DECL,
     IMPORT_SPECIFIER,
+    IMPORT_FOR_SPECIFIER,
     CONST_DECL,
     FUNCTION_DECL,
     TYPE_DECL,
     TYPE_DEF_RECORD,
     TYPE_DEF_UNION,
     TYPE_DEF_ALIAS,
+    TYPE_DEF_STRING_UNION,
+    FOR_BLOCK,
+    DERIVING_CLAUSE,
+    TRAIT_DECL,
+    USE_DECL,
+    TEST_BLOCK,
+    ASSERT_EXPR,
     RECORD_FIELD,
+    RECORD_SPREAD,
     VARIANT,
     VARIANT_FIELD,
     TYPE_EXPR,
@@ -118,18 +141,27 @@ pub enum SyntaxKind {
     ARROW_EXPR,
     MATCH_EXPR,
     MATCH_ARM,
+    MATCH_GUARD,
     PATTERN,
-    IF_EXPR,
     BLOCK_EXPR,
     RETURN_EXPR,
     AWAIT_EXPR,
     UNWRAP_EXPR,
+    TRY_EXPR,
     GROUPED_EXPR,
     ARRAY_EXPR,
     SPREAD_EXPR,
+    COLLECT_EXPR,
+    TUPLE_EXPR,
+    DOT_SHORTHAND,
     OK_EXPR,
     ERR_EXPR,
     SOME_EXPR,
+    PARSE_EXPR,
+    OBJECT_EXPR,
+    OBJECT_FIELD,
+    TODO_EXPR,
+    UNREACHABLE_EXPR,
 
     // JSX
     JSX_ELEMENT,
@@ -163,9 +195,9 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
 
 /// The language tag for Floe's CST.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ZenLang {}
+pub enum FloeLang {}
 
-impl rowan::Language for ZenLang {
+impl rowan::Language for FloeLang {
     type Kind = SyntaxKind;
 
     fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
@@ -180,8 +212,8 @@ impl rowan::Language for ZenLang {
 }
 
 /// Convenience type aliases.
-pub type SyntaxNode = rowan::SyntaxNode<ZenLang>;
-pub type SyntaxToken = rowan::SyntaxToken<ZenLang>;
+pub type SyntaxNode = rowan::SyntaxNode<FloeLang>;
+pub type SyntaxToken = rowan::SyntaxToken<FloeLang>;
 
 /// Convert a lexer `TokenKind` to a `SyntaxKind`.
 pub fn token_kind_to_syntax(kind: &TokenKind) -> SyntaxKind {
@@ -196,25 +228,36 @@ pub fn token_kind_to_syntax(kind: &TokenKind) -> SyntaxKind {
         TokenKind::Export => SyntaxKind::KW_EXPORT,
         TokenKind::Import => SyntaxKind::KW_IMPORT,
         TokenKind::From => SyntaxKind::KW_FROM,
-        TokenKind::Return => SyntaxKind::KW_RETURN,
         TokenKind::Match => SyntaxKind::KW_MATCH,
         TokenKind::Type => SyntaxKind::KW_TYPE,
         TokenKind::Opaque => SyntaxKind::KW_OPAQUE,
         TokenKind::Async => SyntaxKind::KW_ASYNC,
         TokenKind::Await => SyntaxKind::KW_AWAIT,
-        TokenKind::If => SyntaxKind::KW_IF,
-        TokenKind::Else => SyntaxKind::KW_ELSE,
+        TokenKind::For => SyntaxKind::KW_FOR,
+        TokenKind::SelfKw => SyntaxKind::KW_SELF,
+        TokenKind::Try => SyntaxKind::KW_TRY,
+        TokenKind::Trait => SyntaxKind::KW_TRAIT,
+        TokenKind::Assert => SyntaxKind::KW_ASSERT,
+        TokenKind::When => SyntaxKind::KW_WHEN,
+        TokenKind::Collect => SyntaxKind::KW_COLLECT,
+        TokenKind::Deriving => SyntaxKind::KW_DERIVING,
+        TokenKind::Use => SyntaxKind::KW_USE,
         TokenKind::Ok => SyntaxKind::KW_OK,
         TokenKind::Err => SyntaxKind::KW_ERR,
         TokenKind::Some => SyntaxKind::KW_SOME,
         TokenKind::None => SyntaxKind::KW_NONE,
+        TokenKind::Parse => SyntaxKind::KW_PARSE,
+        TokenKind::Todo => SyntaxKind::KW_TODO,
+        TokenKind::Unreachable => SyntaxKind::KW_UNREACHABLE,
         TokenKind::Pipe => SyntaxKind::PIPE,
         TokenKind::ThinArrow => SyntaxKind::THIN_ARROW,
+        TokenKind::LeftArrow => SyntaxKind::LEFT_ARROW,
         TokenKind::FatArrow => SyntaxKind::FAT_ARROW,
         TokenKind::VerticalBar => SyntaxKind::VERT_BAR,
         TokenKind::Question => SyntaxKind::QUESTION,
         TokenKind::Underscore => SyntaxKind::UNDERSCORE,
         TokenKind::DotDot => SyntaxKind::DOT_DOT,
+        TokenKind::DotDotDot => SyntaxKind::DOT_DOT_DOT,
         TokenKind::Plus => SyntaxKind::PLUS,
         TokenKind::Minus => SyntaxKind::MINUS,
         TokenKind::Star => SyntaxKind::STAR,

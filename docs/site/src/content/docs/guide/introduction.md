@@ -6,37 +6,37 @@ Floe is a programming language that compiles to TypeScript. It's designed for Ty
 
 ## Why Floe?
 
-TypeScript is great, but it has escape hatches everywhere: `any`, `null`, `undefined`, type assertions. These lead to runtime errors that the type system was supposed to prevent.
+TypeScript allows `any`, `null`, `undefined`, and type assertions. These lead to runtime errors that the type system was supposed to prevent.
 
-Floe removes the escape hatches and adds features that make correct code easy to write:
+Floe removes these and adds features that make correct code easy to write:
 
 - **Pipes** (`|>`) for readable data transformations
 - **Pattern matching** (`match`) with exhaustiveness checking
 - **Result/Option** instead of null/undefined/exceptions
-- **No `any`** — use `unknown` and narrow
-- **No `null`/`undefined`** — use `Option<T>` with `Some`/`None`
-- **No classes** — use functions and records
+- **No `any`** - use `unknown` and narrow
+- **No `null`/`undefined`** - use `Option<T>` with `Some`/`None`
+- **No classes** - use functions and records
 
 ## What does it look like?
 
 ```floe
-import { useState } from "react"
+import trusted { useState } from "react"
 
-type Todo = {
+type Todo {
   id: string,
   text: string,
-  done: bool,
+  done: boolean,
 }
 
 export fn App() -> JSX.Element {
-  const [todos, setTodos] = useState([])
+  const [todos, setTodos] = useState<Array<Todo>>([])
 
-  const completed = todos
+  const completedCount = todos
     |> filter(.done)
     |> length
 
-  return <div>
-    <h1>Todos ({completed} done)</h1>
+  <div>
+    <h1>Todos ({completedCount} done)</h1>
   </div>
 }
 ```
@@ -53,9 +53,9 @@ type Todo = {
 };
 
 export function App(): JSX.Element {
-  const [todos, setTodos] = useState([]);
+  const [todos, setTodos] = useState<Todo[]>([]);
 
-  const completed = length(filter(todos, (t) => t.done));
+  const completedCount = length(filter(todos, (t) => t.done));
 
   return <div>
     <h1>Todos ({completed} done)</h1>
@@ -65,7 +65,7 @@ export function App(): JSX.Element {
 
 ## Design Philosophy
 
-1. **Familiar syntax** — A React developer should understand Floe in 30 minutes
-2. **No runtime** — The output is vanilla TypeScript with zero dependencies
-3. **Eject anytime** — If you stop using Floe, you have normal `.ts` files
-4. **Strictness is a feature** — Every restriction exists to prevent a category of bugs
+1. **Familiar syntax** - designed to be readable by TypeScript developers
+2. **Plain output** - the compiler emits readable TypeScript
+3. **Eject anytime** - if you stop using Floe, you have normal `.ts` files
+4. **Strictness is a feature** - every restriction exists to prevent a category of bugs
