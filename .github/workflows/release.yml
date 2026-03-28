@@ -147,9 +147,7 @@ jobs:
         working-directory: integrations/vite-plugin-floe
         run: |
           pnpm build
-          npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm publish --access public --provenance
 
   publish-extension:
     name: Publish to Open VSX
