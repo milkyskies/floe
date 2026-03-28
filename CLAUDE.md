@@ -20,6 +20,10 @@
 
 Do **not** use parser generators (pest, nom, lalrpop). The parser is handwritten recursive descent for better error recovery and LSP integration.
 
+## Commits
+
+Use **conventional commits** for all commit messages and PR titles. Prefixes: `feat:`, `fix:`, `chore:`, `test:`. This is required for automated versioning with release-please. See `.claude/rules/workflow.md` for details.
+
 <!-- glb-agent-instructions -->
 ## Task Tracking with glb
 
