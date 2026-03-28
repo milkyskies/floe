@@ -95,6 +95,7 @@ All four of TypeScript's `?` uses (`?.`, `??`, `?:`, `? :`) are removed. `?` now
 | Strict parse | `Number.parse("123")` returns `Result` | no silent `NaN` or partial parse |
 | Http module | `Http.get(url)`, `Http.post(url, body)` | async IIFE wrapping `fetch` in `Result` |
 | Number separators | `1_000_000`, `3.141_592`, `0xFF_FF` | underscores stripped in output |
+| Mock data | `mock<User>`, `mock<User>(name: "Alice")` | object literal with generated test data |
 
 ### What's Removed (compile errors)
 
@@ -1133,6 +1134,68 @@ ExprKind::Parse { type_arg: TypeExpr, value: Box<Expr> }
 ```
 
 In pipe context (`json |> parse<T>`), value is a `Placeholder` that gets substituted with the piped expression.
+
+---
+
+## `mock<T>` - Compiler Built-in for Test Data Generation
+
+`mock<T>` is a compiler built-in that generates test data from Floe type definitions. No runtime library (e.g., faker.js) is needed - the compiler emits object literals directly. Always in sync with the type - add a field, mock data updates automatically.
+
+### Syntax
+
+```floe
+// Basic - compiler generates realistic mock data from the type
+const testUser = mock<User>
+// { id: "mock-id-1", name: "mock-name-2", age: 3 }
+
+// Override specific fields
+const admin = mock<User>(role: Admin)
+// Random everything else, but role is Admin
+
+// Inline record types
+const point = mock<{ x: number, y: number }>
+// { x: 1, y: 2 }
+```
+
+### Return Type
+
+`mock<T>` returns `T` directly (not wrapped in Result).
+
+### Generation Rules
+
+| Type | Generated Value |
+|------|----------------|
+| `string` | `"mock-fieldname-N"` (uses field name for context) |
+| `number` | Sequential integers starting from 1 |
+| `boolean` | Alternates true/false |
+| `Array<T>` | Array with 1 mock element |
+| Record types | Recursively mock each field |
+| Unions | Pick first variant |
+| `Option<T>` | `Some(mock<T>)` (the inner value, not undefined) |
+| String literal unions | First variant string |
+| Named/newtypes | Mock the inner type |
+
+### Codegen
+
+`mock<User>` where `type User { id: string, name: string, age: number }` emits:
+
+```typescript
+{ id: "mock-id-1", name: "mock-name-2", age: 3 }
+```
+
+`mock<User>(name: "Alice")` emits:
+
+```typescript
+{ id: "mock-id-1", name: "Alice", age: 2 }
+```
+
+### AST Node
+
+```
+ExprKind::Mock { type_arg: TypeExpr, overrides: Vec<Arg> }
+```
+
+Overrides are named arguments that replace the generated value for specific fields.
 
 ---
 
