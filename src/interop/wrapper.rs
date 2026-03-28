@@ -78,7 +78,29 @@ pub fn wrap_boundary_type(ts_type: &TsType) -> Type {
         TsType::Object(fields) => {
             let wrapped: Vec<(String, Type)> = fields
                 .iter()
-                .map(|(name, ty)| (name.clone(), wrap_boundary_type(ty)))
+                .map(|f| {
+                    let inner = wrap_boundary_type(&f.ty);
+                    let ty = if f.optional {
+                        // Check if the type is nullable (contains null/undefined)
+                        let is_nullable = match &f.ty {
+                            TsType::Union(parts) => parts
+                                .iter()
+                                .any(|p| matches!(p, TsType::Null | TsType::Undefined)),
+                            TsType::Null | TsType::Undefined => true,
+                            _ => false,
+                        };
+                        if is_nullable {
+                            // x?: T | null → Settable<T>
+                            Type::Settable(Box::new(inner.unwrap_option()))
+                        } else {
+                            // x?: T → Option<T>
+                            Type::Option(Box::new(inner))
+                        }
+                    } else {
+                        inner
+                    };
+                    (f.name.clone(), ty)
+                })
                 .collect();
             Type::Record(wrapped)
         }
@@ -140,14 +162,14 @@ fn try_parse_result_union(parts: &[&TsType]) -> Option<Type> {
 
     for part in parts {
         if let TsType::Object(fields) = part {
-            let ok_field = fields.iter().find(|(n, _)| n == "ok");
-            let value_field = fields.iter().find(|(n, _)| n == "value");
-            let error_field = fields.iter().find(|(n, _)| n == "error");
+            let ok_field = fields.iter().find(|f| f.name == "ok");
+            let value_field = fields.iter().find(|f| f.name == "value");
+            let error_field = fields.iter().find(|f| f.name == "error");
 
             if value_field.is_some() && ok_field.is_some() {
-                ok_type = value_field.map(|(_, ty)| wrap_boundary_type(ty));
+                ok_type = value_field.map(|f| wrap_boundary_type(&f.ty));
             } else if error_field.is_some() && ok_field.is_some() {
-                err_type = error_field.map(|(_, ty)| wrap_boundary_type(ty));
+                err_type = error_field.map(|f| wrap_boundary_type(&f.ty));
             }
         }
     }

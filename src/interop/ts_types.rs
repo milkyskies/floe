@@ -1,5 +1,13 @@
 //! TypeScript type parsing: TsType enum and type string parser.
 
+/// A field in a TypeScript object type, tracking optionality.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectField {
+    pub name: String,
+    pub ty: TsType,
+    pub optional: bool,
+}
+
 /// A raw TypeScript type as parsed from .d.ts files, before boundary wrapping.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TsType {
@@ -27,7 +35,7 @@ pub enum TsType {
     /// Array shorthand: `T[]`
     Array(Box<TsType>),
     /// Object type / record
-    Object(Vec<(String, TsType)>),
+    Object(Vec<ObjectField>),
     /// Tuple: `[T, U]`
     Tuple(Vec<TsType>),
 }
@@ -64,7 +72,10 @@ pub fn ts_type_to_string(ty: &TsType) -> String {
         TsType::Object(fields) => {
             let fs: Vec<String> = fields
                 .iter()
-                .map(|(n, t)| format!("{}: {}", n, ts_type_to_string(t)))
+                .map(|f| {
+                    let opt = if f.optional { "?" } else { "" };
+                    format!("{}{}: {}", f.name, opt, ts_type_to_string(&f.ty))
+                })
                 .collect();
             format!("{{ {} }}", fs.join(", "))
         }
@@ -148,7 +159,7 @@ pub(super) fn parse_type_str(s: &str) -> TsType {
             return TsType::Object(Vec::new());
         }
         let parts = split_at_top_level(inner, ';');
-        let fields: Vec<(String, TsType)> = parts
+        let fields: Vec<ObjectField> = parts
             .iter()
             .filter_map(|part| {
                 let part = part.trim();
@@ -156,13 +167,11 @@ pub(super) fn parse_type_str(s: &str) -> TsType {
                     return None;
                 }
                 let colon = part.find(':')?;
-                let name = part[..colon]
-                    .trim()
-                    .trim_end_matches('?')
-                    .trim_start_matches("readonly ")
-                    .to_string();
+                let raw_name = part[..colon].trim().trim_start_matches("readonly ");
+                let optional = raw_name.ends_with('?');
+                let name = raw_name.trim_end_matches('?').to_string();
                 let ty = parse_type_str(part[colon + 1..].trim());
-                Some((name, ty))
+                Some(ObjectField { name, ty, optional })
             })
             .collect();
         return TsType::Object(fields);
