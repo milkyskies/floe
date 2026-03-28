@@ -45,6 +45,7 @@ export default function floe(options: FloeOptions = {}): Plugin {
         return {
           code: result.code,
           map: result.map,
+          moduleType: "tsx",
         };
       } catch (error) {
         const message =
