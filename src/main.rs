@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 
 use floe::checker::{Checker, ExprTypeMap};
 use floe::codegen::Codegen;
+use floe::desugar;
 use floe::diagnostic;
 use floe::find_project_dir;
 use floe::parser::Parser as ZsParser;
@@ -141,6 +142,9 @@ fn compile_source(file_path: &Path, filename: &str, source: &str) -> Result<Comp
         let rendered = diagnostic::render_diagnostics(filename, source, &check_diags);
         eprintln!("{rendered}");
     }
+
+    let mut program = program;
+    desugar::desugar_program(&mut program);
 
     Ok(CompileResult {
         program,
@@ -359,7 +363,7 @@ fn cmd_test(path: &Path) -> Result<()> {
     let mut total_files = 0;
     let mut errors = 0;
 
-    for (file, source, filename, program) in &test_files {
+    for (file, source, filename, program) in &mut test_files {
         // Resolve imports
         let resolved = resolve::resolve_imports(file, program);
 
@@ -376,7 +380,7 @@ fn cmd_test(path: &Path) -> Result<()> {
             continue;
         }
 
-        // Generate code in test mode
+        desugar::desugar_program(program);
         let output = Codegen::with_imports(expr_types, &resolved)
             .with_test_mode()
             .generate(program);
