@@ -31,8 +31,8 @@
         ],
         "configuration": "./language-configuration.json",
         "icon": {
-          "light": "./icons/zs-light.png",
-          "dark": "./icons/zs-dark.png"
+          "light": "../../assets/logo.svg",
+          "dark": "../../assets/logo.svg"
         }
       }
     ],

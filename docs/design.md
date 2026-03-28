@@ -757,19 +757,7 @@ for User {
 }
 ```
 
-**Inline form** — single function, no block:
-
-```floe
-export for User fn display(self) -> string {
-  `${self.name} (${self.age})`
-}
-
-export for User fn greet(self, greeting: string) -> string {
-  `${greeting}, ${self.name}!`
-}
-```
-
-Export is per-function. In inline form, `export` goes before `for`. In block form, `export` goes before `fn` inside the block.
+Export is per-function — `export` goes before `fn` inside the block.
 
 ```floe
 // Works with generic types too
@@ -809,7 +797,7 @@ For block rules:
 4. Importing a type imports same-file `for` blocks automatically
 5. Cross-file `for` blocks use `import { for Type }` syntax
 6. Compiles to standalone functions with `self` explicitly typed
-7. Both block and inline syntax supported; inline creates a ForBlock with one function
+7. Only block syntax is supported (`for Type { ... }`)
 
 ### Traits — Type-Directed Behavioral Contracts
 
@@ -1121,12 +1109,12 @@ In pipe context (`json |> parse<T>`), value is a `Placeholder` that gets substit
 ```
 floe/
 ├── crates/
-│   ├── zs_lexer/          # Tokenizer
-│   ├── zs_parser/         # Recursive descent parser → AST
-│   ├── zs_checker/        # Type checker, exhaustiveness, brands, opaques
-│   ├── zs_codegen/        # AST → .tsx emitter
-│   ├── zs_lsp/            # Language server (tower-lsp)
-│   └── zs_cli/            # CLI binary (floe)
+│   ├── floe_lexer/        # Tokenizer
+│   ├── floe_parser/       # Recursive descent parser → AST
+│   ├── floe_checker/      # Type checker, exhaustiveness, newtypes, opaques
+│   ├── floe_codegen/      # AST → .tsx emitter
+│   ├── floe_lsp/          # Language server (tower-lsp)
+│   └── floe_cli/          # CLI binary (floe)
 ├── runtime/                 # ZERO runtime — intentionally empty
 ├── tests/
 │   ├── fixtures/            # .fl input files
@@ -1134,7 +1122,7 @@ floe/
 └── Cargo.toml
 ```
 
-### Lexer (`zs_lexer`)
+### Lexer (`floe_lexer`)
 
 Key tokens beyond standard TypeScript:
 
@@ -1177,7 +1165,7 @@ Banned tokens (immediate compile errors with helpful messages):
 - `void` → "Use the unit type () instead"
 - `function` → "Use fn instead"
 
-### Parser (`zs_parser`)
+### Parser (`floe_parser`)
 
 Handwritten recursive descent. Key AST nodes:
 
@@ -1212,10 +1200,10 @@ enum Expr {
 // Top-level items include ForBlock, TraitDecl, and TestBlock
 enum ItemKind {
     Import, Const, Function, TypeDecl,
-    ForBlock {                 // for Type { fn f(self) ... } or [export] for Type fn f(self) ...
+    ForBlock {                 // for Type { fn f(self) ... }
         type_name: TypeExpr,
         trait_name: Option<String>,  // for Type: Trait { ... }
-        functions: Vec<FunctionDecl>,  // one function for inline, multiple for block form
+        functions: Vec<FunctionDecl>,
     },
     TraitDecl {                // trait Name { fn method(self) ... }
         name: String,
@@ -1263,7 +1251,7 @@ enum StringPatternSegment {
 }
 ```
 
-### Type Checker (`zs_checker`)
+### Type Checker (`floe_checker`)
 
 The heart of the compiler:
 
@@ -1364,7 +1352,7 @@ match try findElement("app") {
 (() => { try { return { ok: true as const, value: parseYaml(input) }; } catch (_e) { return { ok: false as const, error: _e instanceof Error ? _e : new Error(String(_e)) }; } })()
 ```
 
-### Code Generator (`zs_codegen`)
+### Code Generator (`floe_codegen`)
 
 Emits clean, readable `.tsx`. Zero runtime imports.
 
@@ -1415,7 +1403,7 @@ Emits clean, readable `.tsx`. Zero runtime imports.
 
 ---
 
-## Language Server (`zs_lsp`)
+## Language Server (`floe_lsp`)
 
 Built on `tower-lsp` (Rust LSP framework).
 

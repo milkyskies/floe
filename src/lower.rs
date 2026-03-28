@@ -5,7 +5,7 @@ mod pattern;
 use crate::lexer::span::Span;
 use crate::parser::ParseError;
 use crate::parser::ast::*;
-use crate::syntax::{SyntaxKind, SyntaxNode, ZenLang};
+use crate::syntax::{FloeLang, SyntaxKind, SyntaxNode};
 
 /// Lower a CST `SyntaxNode` (rowan) tree into the existing AST.
 pub fn lower_program(root: &SyntaxNode, source: &str) -> Result<Program, Vec<ParseError>> {
@@ -421,7 +421,6 @@ impl<'src> Lowerer<'src> {
                     }
                     SyntaxKind::FUNCTION_DECL => {
                         if let Some(mut decl) = self.lower_for_block_function(&child) {
-                            // For inline for-declarations, export comes from the ITEM node
                             decl.exported = next_exported || item_exported;
                             functions.push(decl);
                         }
@@ -1025,7 +1024,7 @@ impl<'src> Lowerer<'src> {
         Span::new(start, end, line, column)
     }
 
-    fn token_span(&self, token: &rowan::SyntaxToken<ZenLang>) -> Span {
+    fn token_span(&self, token: &rowan::SyntaxToken<FloeLang>) -> Span {
         let range = token.text_range();
         let start: usize = range.start().into();
         let end: usize = range.end().into();

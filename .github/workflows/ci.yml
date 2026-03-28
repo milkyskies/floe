@@ -46,5 +46,28 @@ jobs:
       - name: Build release for LSP tests
         run: cargo build
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install example dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Floe check examples
+        run: |
+          ./target/debug/floe check examples/todo-app/src/
+          ./target/debug/floe check examples/store/src/
+
+      - name: Floe build examples
+        run: |
+          ./target/debug/floe build examples/todo-app/src/
+          ./target/debug/floe build examples/store/src/
+
       - name: LSP integration tests
         run: python3 scripts/test-lsp.py ./target/debug/floe
