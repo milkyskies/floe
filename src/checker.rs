@@ -1784,16 +1784,14 @@ impl Checker {
         // Opaque type alias: within the defining module, the underlying type
         // is assignable to the opaque type (e.g. returning `string` as `HashedPassword`).
         // Currently all code lives in a single file, so same-file = defining module.
-        if let Type::Named(name) = expected {
-            if let Some(info) = self.env.lookup_type(name) {
-                if info.opaque {
-                    if let crate::parser::ast::TypeDef::Alias(ref type_expr) = info.def {
-                        let underlying = expr::simple_resolve_type_expr(type_expr);
-                        if self.types_compatible(&underlying, actual) {
-                            return true;
-                        }
-                    }
-                }
+        if let Type::Named(name) = expected
+            && let Some(info) = self.env.lookup_type(name)
+            && info.opaque
+            && let crate::parser::ast::TypeDef::Alias(ref type_expr) = info.def
+        {
+            let underlying = expr::simple_resolve_type_expr(type_expr);
+            if self.types_compatible(&underlying, actual) {
+                return true;
             }
         }
 

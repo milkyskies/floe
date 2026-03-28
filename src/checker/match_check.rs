@@ -271,20 +271,20 @@ impl Checker {
         }
 
         // For tuple types, check exhaustiveness of the product space
-        if let Type::Tuple(elem_types) = subject_ty {
-            if !self.check_tuple_exhaustiveness(elem_types, arms) {
-                self.diagnostics.push(
-                    Diagnostic::error(
-                        "non-exhaustive match on tuple: not all combinations are covered",
-                        span,
-                    )
-                    .with_label("not all cases covered")
-                    .with_help(
-                        "add match arms for the missing combinations, or add a `_ ->` catch-all",
-                    )
-                    .with_code("E004"),
-                );
-            }
+        if let Type::Tuple(elem_types) = subject_ty
+            && !self.check_tuple_exhaustiveness(elem_types, arms)
+        {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "non-exhaustive match on tuple: not all combinations are covered",
+                    span,
+                )
+                .with_label("not all cases covered")
+                .with_help(
+                    "add match arms for the missing combinations, or add a `_ ->` catch-all",
+                )
+                .with_code("E004"),
+            );
         }
     }
 
