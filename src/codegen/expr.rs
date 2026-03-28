@@ -526,17 +526,7 @@ impl Codegen {
 
     /// Map a checker Type to the corresponding stdlib module name.
     fn type_to_stdlib_module(ty: &crate::checker::Type) -> Option<&'static str> {
-        use crate::checker::Type;
-        match ty {
-            Type::Array(_) => Some("Array"),
-            Type::Map { .. } => Some("Map"),
-            Type::Set { .. } => Some("Set"),
-            Type::String => Some("String"),
-            Type::Number => Some("Number"),
-            Type::Option(_) => Some("Option"),
-            Type::Result { .. } => Some("Result"),
-            _ => None,
-        }
+        crate::type_layout::type_to_stdlib_module(ty)
     }
 
     pub(super) fn emit_pipe(&mut self, left: &Expr, right: &Expr) {

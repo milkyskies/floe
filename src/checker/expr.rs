@@ -1472,16 +1472,7 @@ impl Checker {
     }
 
     fn type_to_stdlib_module(ty: &Type) -> Option<&'static str> {
-        match ty {
-            Type::Array(_) => Some(type_layout::MOD_ARRAY),
-            Type::Map { .. } => Some(type_layout::MOD_MAP),
-            Type::Set { .. } => Some(type_layout::MOD_SET),
-            Type::String => Some(type_layout::MOD_STRING),
-            Type::Number => Some(type_layout::MOD_NUMBER),
-            Type::Option(_) => Some(type_layout::MOD_OPTION),
-            Type::Result { .. } => Some(type_layout::MOD_RESULT),
-            _ => None,
-        }
+        type_layout::type_to_stdlib_module(ty)
     }
 
     /// Resolve the type of a member access (`obj_ty.field`), producing diagnostics for errors.
