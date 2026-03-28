@@ -365,7 +365,7 @@ fn parse_array_type() {
 
 #[test]
 fn pipe_lambda_multi_arg() {
-    let expr = first_expr("fn(a, b) a + b");
+    let expr = first_expr("(a, b) => a + b");
     match expr {
         ExprKind::Arrow { params, .. } => {
             assert_eq!(params.len(), 2);
@@ -378,7 +378,7 @@ fn pipe_lambda_multi_arg() {
 
 #[test]
 fn pipe_lambda_single_arg() {
-    let expr = first_expr("fn(x) x + 1");
+    let expr = first_expr("(x) => x + 1");
     match expr {
         ExprKind::Arrow { params, .. } => {
             assert_eq!(params.len(), 1);
@@ -390,7 +390,7 @@ fn pipe_lambda_single_arg() {
 
 #[test]
 fn pipe_lambda_typed() {
-    let expr = first_expr("fn(x: number) x + 1");
+    let expr = first_expr("(x: number) => x + 1");
     match expr {
         ExprKind::Arrow { params, .. } => {
             assert!(params[0].type_ann.is_some());
@@ -401,7 +401,7 @@ fn pipe_lambda_typed() {
 
 #[test]
 fn zero_arg_lambda() {
-    let expr = first_expr("fn() 42");
+    let expr = first_expr("() => 42");
     match expr {
         ExprKind::Arrow { params, .. } => {
             assert_eq!(params.len(), 0);
@@ -649,6 +649,20 @@ fn function_decl() {
             assert!(!decl.async_fn);
         }
         other => panic!("expected function, got {other:?}"),
+    }
+}
+
+#[test]
+fn fn_binding_form() {
+    let program = parse_ok("fn add(a: number, b: number) -> number { a + b }\nfn inc = add(1, _)");
+    assert_eq!(program.items.len(), 2);
+    match &program.items[1].kind {
+        ItemKind::Function(decl) => {
+            assert_eq!(decl.name, "inc");
+            assert!(decl.params.is_empty());
+            assert!(decl.return_type.is_none());
+        }
+        other => panic!("expected function binding, got {other:?}"),
     }
 }
 
@@ -1040,7 +1054,7 @@ type Todo { id: string, text: string, done: boolean }
 
 export fn TodoApp() {
     const [todos, setTodos] = useState([])
-    <div>{todos |> map(fn(t) <li>{t.text}</li>)}</div>
+    <div>{todos |> map((t) => <li>{t.text}</li>)}</div>
 }
 "#;
     let program = parse_ok(input);
@@ -1591,7 +1605,7 @@ fn object_literal_value_is_string_not_key() {
 #[test]
 fn lambda_object_destructure_binds_variables() {
     // `|{ x, y }| x + y` — x and y should be bound by the destructure
-    let expr = first_expr("fn({ x, y }) x + y");
+    let expr = first_expr("({ x, y }) => x + y");
     match expr {
         ExprKind::Arrow { params, .. } => {
             assert_eq!(params.len(), 1);
@@ -1612,7 +1626,7 @@ fn lambda_object_destructure_binds_variables() {
 
 #[test]
 fn async_zero_arg_lambda() {
-    let expr = first_expr("async fn() fetchData()");
+    let expr = first_expr("async () => fetchData()");
     match expr {
         ExprKind::Arrow {
             async_fn, params, ..
@@ -1626,7 +1640,7 @@ fn async_zero_arg_lambda() {
 
 #[test]
 fn async_lambda_with_params() {
-    let expr = first_expr("async fn(url) fetch(url)");
+    let expr = first_expr("async (url) => fetch(url)");
     match expr {
         ExprKind::Arrow {
             async_fn, params, ..
@@ -1641,7 +1655,7 @@ fn async_lambda_with_params() {
 
 #[test]
 fn non_async_lambda_is_not_async() {
-    let expr = first_expr("fn() 42");
+    let expr = first_expr("() => 42");
     match expr {
         ExprKind::Arrow { async_fn, .. } => {
             assert!(!async_fn, "expected non-async lambda");
@@ -1652,7 +1666,7 @@ fn non_async_lambda_is_not_async() {
 
 #[test]
 fn lambda_destructured_param() {
-    let expr = first_expr("fn({ name, age }) name");
+    let expr = first_expr("({ name, age }) => name");
     match expr {
         ExprKind::Arrow { params, .. } => {
             assert_eq!(params.len(), 1);
