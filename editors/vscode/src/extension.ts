@@ -8,7 +8,7 @@ import {
 
 let client: LanguageClient | undefined;
 
-export function activate(context: vscode.ExtensionContext) {
+function createClient(): LanguageClient {
   const config = vscode.workspace.getConfiguration("floe");
   const serverPath = config.get<string>("serverPath", "floe");
 
@@ -24,14 +24,33 @@ export function activate(context: vscode.ExtensionContext) {
     },
   };
 
-  client = new LanguageClient(
+  return new LanguageClient(
     "floe",
     "Floe Language Server",
     serverOptions,
     clientOptions
   );
+}
 
+export function activate(context: vscode.ExtensionContext) {
+  client = createClient();
   client.start();
+
+  const restartCommand = vscode.commands.registerCommand(
+    "floe.restartServer",
+    async () => {
+      if (client) {
+        await client.stop();
+      }
+      client = createClient();
+      await client.start();
+      vscode.window.showInformationMessage(
+        "Floe Language Server restarted."
+      );
+    }
+  );
+
+  context.subscriptions.push(restartCommand);
 }
 
 export function deactivate(): Thenable<void> | undefined {
