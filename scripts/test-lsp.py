@@ -171,12 +171,12 @@ class LspClient:
             is_notification=True,
         )
 
-    def hover(self, uri: str, line: int, char: int) -> dict | None:
+    def hover(self, uri: str, line: int, char: int, timeout: float = 5.0) -> dict | None:
         msg_id = self.send(
             "textDocument/hover",
             {"textDocument": {"uri": uri}, "position": {"line": line, "character": char}},
         )
-        return self.wait_response(msg_id)
+        return self.wait_response(msg_id, timeout=timeout)
 
     def completion(self, uri: str, line: int, char: int) -> dict | None:
         msg_id = self.send(
@@ -1440,7 +1440,7 @@ def main():
     check("JSX: parses without syntax errors", len(parse_errs) == 0, f"Parse errors: {[e.get('message','') for e in parse_errs[:3]]}")
 
     # Hover on JSX component function
-    h = hover_text(lsp.hover(URI, 2, 14))
+    h = hover_text(lsp.hover(URI, 2, 14, timeout=10))
     check("JSX: hover on component fn", h is not None and "Counter" in (h or ""), f"Got: {h}")
 
     # Hover on destructured useState vars
