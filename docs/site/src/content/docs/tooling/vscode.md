@@ -58,7 +58,7 @@ Full IDE features powered by `floe lsp`:
 | `imp` | Import statement |
 | `pipe` | Pipe expression |
 | `co` | Const declaration |
-| `brand` | Brand type |
+| `newtype` | Newtype wrapper |
 | `opaque` | Opaque type |
 
 ## Configuration

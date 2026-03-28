@@ -57,6 +57,11 @@ impl StdlibRegistry {
         self.functions.iter().filter(|f| f.name == name).collect()
     }
 
+    /// Get all stdlib functions.
+    pub fn all_functions(&self) -> &[StdlibFn] {
+        &self.functions
+    }
+
     /// Check if a name is a stdlib module.
     pub fn is_module(&self, name: &str) -> bool {
         self.functions.iter().any(|f| f.module == name)
@@ -170,8 +175,8 @@ fn build_stdlib() -> Vec<StdlibFn> {
         stdlib_fn!("String", "startsWith", [Type::String, Type::String], Type::Bool, "$0.startsWith($1)"),
         stdlib_fn!("String", "endsWith", [Type::String, Type::String], Type::Bool, "$0.endsWith($1)"),
         stdlib_fn!("String", "contains", [Type::String, Type::String], Type::Bool, "$0.includes($1)"),
-        stdlib_fn!("String", "toUpper", [Type::String], Type::String, "$0.toUpperCase()"),
-        stdlib_fn!("String", "toLower", [Type::String], Type::String, "$0.toLowerCase()"),
+        stdlib_fn!("String", "toUpperCase", [Type::String], Type::String, "$0.toUpperCase()"),
+        stdlib_fn!("String", "toLowerCase", [Type::String], Type::String, "$0.toLowerCase()"),
         stdlib_fn!("String", "length", [Type::String], Type::Number, "$0.length"),
         stdlib_fn!("String", "slice", [Type::String, Type::Number, Type::Number], Type::String, "$0.slice($1, $2)"),
         stdlib_fn!("String", "padStart", [Type::String, Type::Number, Type::String], Type::String, "$0.padStart($1, $2)"),

@@ -683,7 +683,7 @@ fn stdlib_string_trim() {
 #[test]
 fn stdlib_string_to_upper() {
     assert_eq!(
-        emit(r#"String.toUpper("hello")"#),
+        emit(r#"String.toUpperCase("hello")"#),
         r#""hello".toUpperCase();"#
     );
 }

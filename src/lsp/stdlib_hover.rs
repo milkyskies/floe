@@ -18,7 +18,7 @@ fn type_var_name(index: usize) -> &'static str {
 }
 
 /// Format a checker Type for hover display, using readable type variable names.
-fn format_type(ty: &crate::checker::Type) -> String {
+pub(super) fn format_type(ty: &crate::checker::Type) -> String {
     use crate::checker::Type;
     match ty {
         Type::Number => "number".to_string(),

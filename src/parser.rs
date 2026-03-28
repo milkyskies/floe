@@ -6,7 +6,7 @@ mod tests;
 use crate::cst::CstParser;
 use crate::lexer::Lexer;
 use crate::lexer::span::Span;
-use crate::lower::lower_program;
+use crate::lower::{lower_program, lower_program_lossy};
 use ast::*;
 
 /// Classification of parse errors for structured diagnostic handling.
@@ -91,6 +91,34 @@ impl Parser {
 
         let root = cst_parse.syntax();
         lower_program(&root, source)
+    }
+
+    /// Parse on a best-effort basis, returning whatever AST was successfully
+    /// built along with any parse errors. Used by the LSP so that a partial
+    /// symbol index can be built even when the source has errors.
+    pub fn parse_lossy(source: &str) -> (Program, Vec<ParseError>) {
+        let tokens = Lexer::new(source).tokenize_with_trivia();
+        let cst_parse = CstParser::new(source, tokens).parse();
+
+        let cst_errors: Vec<ParseError> = cst_parse
+            .errors
+            .iter()
+            .map(|e| {
+                let kind = ParseErrorKind::classify(&e.message);
+                ParseError {
+                    message: e.message.clone(),
+                    span: e.span,
+                    kind,
+                }
+            })
+            .collect();
+
+        let root = cst_parse.syntax();
+        let (program, lower_errors) = lower_program_lossy(&root, source);
+
+        let mut all_errors = cst_errors;
+        all_errors.extend(lower_errors);
+        (program, all_errors)
     }
 }
 

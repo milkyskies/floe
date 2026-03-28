@@ -18,7 +18,7 @@ title: Types Reference
 | `Option<T>` | Present (`Some(T)`) or absent (`None`) |
 | `Array<T>` | Ordered collection |
 | `Promise<T>` | Async value |
-| `Brand<T, Tag>` | Compile-time distinct type |
+| `type Name { T }` | Newtype wrapper (compile-time distinct) |
 
 ## Record Types
 
@@ -116,13 +116,13 @@ match method {
 
 Exhaustiveness is checked -- missing a variant is a compile error.
 
-## Brand Types
+## Newtypes
 
-Types that are distinct at compile time but erase to their base type at runtime:
+Single-variant wrappers that are distinct at compile time but erase to their base type at runtime:
 
 ```floe
-type UserId = Brand<string, "UserId">
-type PostId = Brand<string, "PostId">
+type UserId { string }
+type PostId { string }
 ```
 
 `UserId` and `PostId` are both `string` at runtime, but the compiler prevents mixing them up.

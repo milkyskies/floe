@@ -4,18 +4,18 @@ import { for Array } from "./product"
 // ── Validation helpers ─────────────────────────────────
 
 fn validateEmail(email: string) -> Result<string, CheckoutError> {
-    const trimmed = email |> String.trim
+    const trimmed = email |> trim
 
-    match trimmed |> String.contains("@") {
+    match trimmed |> contains("@") {
         true -> Ok(trimmed),
         false -> Err(InvalidEmail(trimmed)),
     }
 }
 
 fn validatePhone(phone: string) -> Result<string, CheckoutError> {
-    const trimmed = phone |> String.trim
+    const trimmed = phone |> trim
 
-    match trimmed |> String.length {
+    match trimmed |> length {
         n when n >= 7 -> Ok(trimmed),
         _ -> Err(InvalidPhone(trimmed)),
     }

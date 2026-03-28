@@ -2,6 +2,13 @@ use std::collections::HashSet;
 
 use super::*;
 
+/// Represents a concrete value in a single slot of a tuple's product space.
+enum TupleSlotValue {
+    Bool(bool),
+    Variant(String),
+    StringLiteral(String),
+}
+
 // ── Match Exhaustiveness ─────────────────────────────────────
 
 impl Checker {
@@ -235,6 +242,156 @@ impl Checker {
                         .with_code("E004"),
                 );
             }
+        }
+
+        // For number types, require a `_` catch-all (numbers are unbounded)
+        if matches!(subject_ty, Type::Number) {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "non-exhaustive match on `number`: cannot cover all values without a catch-all",
+                    span,
+                )
+                .with_label("number type has infinite values")
+                .with_help("add a `_ ->` catch-all arm")
+                .with_code("E004"),
+            );
+        }
+
+        // For string types, require a `_` catch-all (strings are unbounded)
+        if matches!(subject_ty, Type::String) {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "non-exhaustive match on `string`: cannot cover all values without a catch-all",
+                    span,
+                )
+                .with_label("string type has infinite values")
+                .with_help("add a `_ ->` catch-all arm")
+                .with_code("E004"),
+            );
+        }
+
+        // For tuple types, check exhaustiveness of the product space
+        if let Type::Tuple(elem_types) = subject_ty
+            && !self.check_tuple_exhaustiveness(elem_types, arms)
+        {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "non-exhaustive match on tuple: not all combinations are covered",
+                    span,
+                )
+                .with_label("not all cases covered")
+                .with_help("add match arms for the missing combinations, or add a `_ ->` catch-all")
+                .with_code("E004"),
+            );
+        }
+    }
+
+    /// Check whether the match arms exhaustively cover a tuple type.
+    /// Returns true if the tuple is fully covered.
+    fn check_tuple_exhaustiveness(&self, elem_types: &[Type], arms: &[MatchArm]) -> bool {
+        // Collect the possible values for each position
+        let possible: Vec<Option<Vec<TupleSlotValue>>> = elem_types
+            .iter()
+            .map(|ty| self.finite_values_for_type(ty))
+            .collect();
+
+        // If any element type is unbounded, we can't prove exhaustiveness without a catch-all
+        if possible.iter().any(|p| p.is_none()) {
+            return false;
+        }
+
+        let possible = possible.into_iter().map(|p| p.unwrap()).collect::<Vec<_>>();
+
+        // Generate all combinations (product space) and check each is covered
+        let mut combo: Vec<usize> = vec![0; elem_types.len()];
+        loop {
+            // Check if this combination is covered by some arm
+            let covered = arms.iter().any(|arm| {
+                if arm.guard.is_some() {
+                    return false;
+                }
+                match &arm.pattern.kind {
+                    PatternKind::Tuple(patterns) if patterns.len() == elem_types.len() => patterns
+                        .iter()
+                        .enumerate()
+                        .all(|(i, pat)| self.pattern_covers_value(pat, &possible[i][combo[i]])),
+                    PatternKind::Wildcard | PatternKind::Binding(_) => true,
+                    _ => false,
+                }
+            });
+            if !covered {
+                return false;
+            }
+
+            // Advance to next combination
+            let mut pos = combo.len();
+            loop {
+                if pos == 0 {
+                    return true; // all combinations checked
+                }
+                pos -= 1;
+                combo[pos] += 1;
+                if combo[pos] < possible[pos].len() {
+                    break;
+                }
+                combo[pos] = 0;
+                if pos == 0 {
+                    return true; // wrapped around, done
+                }
+            }
+        }
+    }
+
+    /// Returns the finite set of values for a type, or None if unbounded.
+    fn finite_values_for_type(&self, ty: &Type) -> Option<Vec<TupleSlotValue>> {
+        // Resolve named types
+        let resolved;
+        let ty = if let Type::Named(name) = ty {
+            if let Some(actual) = self.env.lookup(name) {
+                resolved = actual.clone();
+                &resolved
+            } else {
+                return None;
+            }
+        } else {
+            ty
+        };
+
+        match ty {
+            Type::Bool => Some(vec![
+                TupleSlotValue::Bool(true),
+                TupleSlotValue::Bool(false),
+            ]),
+            Type::Union { variants, .. } => Some(
+                variants
+                    .iter()
+                    .map(|(name, _)| TupleSlotValue::Variant(name.clone()))
+                    .collect(),
+            ),
+            Type::StringLiteralUnion { variants, .. } => Some(
+                variants
+                    .iter()
+                    .map(|s| TupleSlotValue::StringLiteral(s.clone()))
+                    .collect(),
+            ),
+            _ => None, // number, string, etc. are unbounded
+        }
+    }
+
+    /// Check if a pattern covers a specific value from the product space.
+    fn pattern_covers_value(&self, pattern: &Pattern, value: &TupleSlotValue) -> bool {
+        match &pattern.kind {
+            PatternKind::Wildcard | PatternKind::Binding(_) => true,
+            PatternKind::Literal(LiteralPattern::Bool(b)) => {
+                matches!(value, TupleSlotValue::Bool(v) if v == b)
+            }
+            PatternKind::Literal(LiteralPattern::String(s)) => {
+                matches!(value, TupleSlotValue::StringLiteral(v) if v == s)
+            }
+            PatternKind::Variant { name, .. } => {
+                matches!(value, TupleSlotValue::Variant(v) if v == name)
+            }
+            _ => false,
         }
     }
 

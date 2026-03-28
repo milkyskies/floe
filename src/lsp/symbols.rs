@@ -9,6 +9,7 @@ pub(super) fn symbol_kind_to_completion(kind: SymbolKind) -> CompletionItemKind 
         SymbolKind::VARIABLE => CompletionItemKind::VARIABLE,
         SymbolKind::TYPE_PARAMETER => CompletionItemKind::CLASS,
         SymbolKind::ENUM_MEMBER => CompletionItemKind::ENUM_MEMBER,
+        SymbolKind::INTERFACE => CompletionItemKind::INTERFACE,
         _ => CompletionItemKind::TEXT,
     }
 }
@@ -251,11 +252,94 @@ impl SymbolIndex {
                             return_type_str,
                         });
 
+                        // Index `self` parameter so hover works on it
+                        for param in &func.params {
+                            if param.name == "self" {
+                                symbols.push(Symbol {
+                                    name: "self".to_string(),
+                                    kind: SymbolKind::VARIABLE,
+                                    start: param.span.start,
+                                    end: param.span.end,
+                                    import_source: None,
+                                    detail: format!("self: {type_str}"),
+                                    first_param_type: None,
+                                    return_type_str: None,
+                                });
+                            } else {
+                                let type_ann = param
+                                    .type_ann
+                                    .as_ref()
+                                    .map(|t| format!(": {}", type_expr_to_string(t)))
+                                    .unwrap_or_default();
+                                symbols.push(Symbol {
+                                    name: param.name.clone(),
+                                    kind: SymbolKind::VARIABLE,
+                                    start: param.span.start,
+                                    end: param.span.end,
+                                    import_source: None,
+                                    detail: format!("parameter {}{type_ann}", param.name),
+                                    first_param_type: None,
+                                    return_type_str: None,
+                                });
+                            }
+                        }
+
                         Self::collect_expr(&func.body, symbols);
                     }
                 }
-                ItemKind::TraitDecl(_) => {
-                    // Traits are compile-time only, no symbols to collect
+                ItemKind::TraitDecl(decl) => {
+                    let vis = if decl.exported { "export " } else { "" };
+                    symbols.push(Symbol {
+                        name: decl.name.clone(),
+                        kind: SymbolKind::INTERFACE,
+                        start: item.span.start,
+                        end: item.span.end,
+                        import_source: None,
+                        detail: format!("{vis}trait {}", decl.name),
+                        first_param_type: None,
+                        return_type_str: None,
+                    });
+
+                    // Index trait methods
+                    for method in &decl.methods {
+                        let params: Vec<String> = method
+                            .params
+                            .iter()
+                            .map(|p| {
+                                if let Some(ty) = &p.type_ann {
+                                    format!("{}: {}", p.name, type_expr_to_string(ty))
+                                } else {
+                                    p.name.clone()
+                                }
+                            })
+                            .collect();
+                        let ret = method
+                            .return_type
+                            .as_ref()
+                            .map(|t| format!(" -> {}", type_expr_to_string(t)))
+                            .unwrap_or_default();
+
+                        symbols.push(Symbol {
+                            name: method.name.clone(),
+                            kind: SymbolKind::FUNCTION,
+                            start: method.span.start,
+                            end: method.span.end,
+                            import_source: None,
+                            detail: format!(
+                                "{}.fn {}({}){ret}",
+                                decl.name,
+                                method.name,
+                                params.join(", ")
+                            ),
+                            first_param_type: None,
+                            return_type_str: method.return_type.as_ref().map(type_expr_to_string),
+                        });
+
+                        // Recurse into default method bodies
+                        if let Some(body) = &method.body {
+                            Self::collect_expr(body, symbols);
+                        }
+                    }
                 }
                 ItemKind::TestBlock(_) => {
                     // Test blocks don't contribute symbols

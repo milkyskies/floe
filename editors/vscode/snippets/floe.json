@@ -107,12 +107,12 @@
     ],
     "description": "Const declaration"
   },
-  "Branded Type": {
-    "prefix": "brand",
+  "Newtype": {
+    "prefix": "newtype",
     "body": [
-      "type ${1:Name} = Brand<${2:string}, \"${1:Name}\">"
+      "type ${1:Name} { ${2:string} }"
     ],
-    "description": "Branded type"
+    "description": "Newtype wrapper"
   },
   "Opaque Type": {
     "prefix": "opaque",
