@@ -29,12 +29,12 @@ export default function floe(options: FloeOptions = {}): Plugin {
     name: "vite-plugin-floe",
     enforce: "pre",
 
-    config() {
-      return {
-        resolve: {
-          extensions: [".fl", ".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"],
-        },
-      };
+    config(config) {
+      const extensions = config.resolve?.extensions ?? [".mjs", ".js", ".mts", ".ts", ".jsx", ".tsx", ".json"];
+      if (!extensions.includes(".fl")) {
+        extensions.unshift(".fl");
+      }
+      return { resolve: { extensions } };
     },
 
     transform(code, id) {
