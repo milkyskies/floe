@@ -67,9 +67,12 @@ impl Formatter<'_> {
             return;
         }
 
-        // Single text or single expr child → inline
+        // Single text, expr, or comment child → inline
         let inline = children.len() == 1
-            && matches!(&children[0], JsxChildInfo::Text(_) | JsxChildInfo::Expr(_));
+            && matches!(
+                &children[0],
+                JsxChildInfo::Text(_) | JsxChildInfo::Expr(_) | JsxChildInfo::Comment(_)
+            );
 
         if inline {
             self.fmt_jsx_children_inline(&children);
@@ -160,6 +163,11 @@ impl Formatter<'_> {
                 JsxChildInfo::Element(node) => {
                     self.fmt_jsx(node);
                 }
+                JsxChildInfo::Comment(text) => {
+                    self.write("{");
+                    self.write(text);
+                    self.write("}");
+                }
             }
         }
     }
@@ -182,6 +190,13 @@ impl Formatter<'_> {
                     self.newline();
                     self.write_indent();
                     self.fmt_jsx(node);
+                }
+                JsxChildInfo::Comment(text) => {
+                    self.newline();
+                    self.write_indent();
+                    self.write("{");
+                    self.write(text);
+                    self.write("}");
                 }
             }
         }
@@ -253,7 +268,11 @@ impl Formatter<'_> {
                     }
                 }
                 SyntaxKind::JSX_EXPR_CHILD => {
-                    children.push(JsxChildInfo::Expr(child));
+                    if let Some(comment) = self.jsx_expr_child_comment(&child) {
+                        children.push(JsxChildInfo::Comment(comment));
+                    } else {
+                        children.push(JsxChildInfo::Expr(child));
+                    }
                 }
                 SyntaxKind::JSX_ELEMENT => {
                     children.push(JsxChildInfo::Element(child));
@@ -262,6 +281,28 @@ impl Formatter<'_> {
             }
         }
         children
+    }
+
+    /// If a `JSX_EXPR_CHILD` contains only a block comment (no real expression),
+    /// return the comment text (e.g. `/* Desktop */`).
+    fn jsx_expr_child_comment(&self, node: &SyntaxNode) -> Option<String> {
+        let mut comment = None;
+        for child_or_tok in node.children_with_tokens() {
+            match child_or_tok {
+                rowan::NodeOrToken::Token(tok) => {
+                    if tok.kind() == SyntaxKind::BLOCK_COMMENT {
+                        comment = Some(tok.text().to_string());
+                    } else if !tok.kind().is_trivia()
+                        && tok.kind() != SyntaxKind::L_BRACE
+                        && tok.kind() != SyntaxKind::R_BRACE
+                    {
+                        return None;
+                    }
+                }
+                rowan::NodeOrToken::Node(_) => return None,
+            }
+        }
+        comment
     }
 
     fn jsx_props_short(&self, props: &[SyntaxNode]) -> bool {
