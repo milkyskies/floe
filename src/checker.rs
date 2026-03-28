@@ -1330,6 +1330,11 @@ impl Checker {
             );
         }
 
+        // Register generic type parameters so they're recognized during type resolution
+        for tp in &decl.type_params {
+            self.env.define(tp, Type::Named(tp.clone()));
+        }
+
         let return_type = decl
             .return_type
             .as_ref()
