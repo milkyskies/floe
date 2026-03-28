@@ -12,7 +12,7 @@ pub mod resolve;
 pub mod sourcemap;
 pub mod stdlib;
 pub mod syntax;
-pub mod type_names;
+pub mod type_layout;
 
 use std::path::{Path, PathBuf};
 

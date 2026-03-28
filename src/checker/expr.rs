@@ -1,5 +1,5 @@
 use super::*;
-use crate::type_names;
+use crate::type_layout;
 
 // ── Expression Checking ──────────────────────────────────────
 
@@ -834,7 +834,9 @@ impl Checker {
                                     for field in fields {
                                         // Infer type for well-known field names
                                         let field_ty = match field.as_str() {
-                                            "error" => Type::Named(type_names::ERROR.to_string()),
+                                            "error" => {
+                                                Type::Named(type_layout::TYPE_ERROR.to_string())
+                                            }
                                             _ => Type::Unknown,
                                         };
                                         self.env.define(field, field_ty);
@@ -914,7 +916,7 @@ impl Checker {
                 self.inside_try = prev_inside_try;
                 Type::Result {
                     ok: Box::new(inner_ty),
-                    err: Box::new(Type::Named(type_names::ERROR.to_string())),
+                    err: Box::new(Type::Named(type_layout::TYPE_ERROR.to_string())),
                 }
             }
 
@@ -927,7 +929,7 @@ impl Checker {
                 }
                 Type::Result {
                     ok: Box::new(t),
-                    err: Box::new(Type::Named(type_names::ERROR.to_string())),
+                    err: Box::new(Type::Named(type_layout::TYPE_ERROR.to_string())),
                 }
             }
 
@@ -1474,13 +1476,13 @@ impl Checker {
 
     fn type_to_stdlib_module(ty: &Type) -> Option<&'static str> {
         match ty {
-            Type::Array(_) => Some(type_names::MOD_ARRAY),
-            Type::Map { .. } => Some(type_names::MOD_MAP),
-            Type::Set { .. } => Some(type_names::MOD_SET),
-            Type::String => Some(type_names::MOD_STRING),
-            Type::Number => Some(type_names::MOD_NUMBER),
-            Type::Option(_) => Some(type_names::MOD_OPTION),
-            Type::Result { .. } => Some(type_names::MOD_RESULT),
+            Type::Array(_) => Some(type_layout::MOD_ARRAY),
+            Type::Map { .. } => Some(type_layout::MOD_MAP),
+            Type::Set { .. } => Some(type_layout::MOD_SET),
+            Type::String => Some(type_layout::MOD_STRING),
+            Type::Number => Some(type_layout::MOD_NUMBER),
+            Type::Option(_) => Some(type_layout::MOD_OPTION),
+            Type::Result { .. } => Some(type_layout::MOD_RESULT),
             _ => None,
         }
     }
@@ -1633,26 +1635,26 @@ pub(crate) fn simple_resolve_type_expr(type_expr: &crate::parser::ast::TypeExpr)
         TypeExprKind::Named {
             name, type_args, ..
         } => match name.as_str() {
-            type_names::NUMBER => Type::Number,
-            type_names::STRING => Type::String,
-            type_names::BOOLEAN => Type::Bool,
-            type_names::UNIT => Type::Unit,
-            type_names::UNDEFINED => Type::Undefined,
-            type_names::ARRAY => {
+            type_layout::TYPE_NUMBER => Type::Number,
+            type_layout::TYPE_STRING => Type::String,
+            type_layout::TYPE_BOOLEAN => Type::Bool,
+            type_layout::TYPE_UNIT => Type::Unit,
+            type_layout::TYPE_UNDEFINED => Type::Undefined,
+            type_layout::TYPE_ARRAY => {
                 let inner = type_args
                     .first()
                     .map(simple_resolve_type_expr)
                     .unwrap_or(Type::Unknown);
                 Type::Array(Box::new(inner))
             }
-            type_names::OPTION => {
+            type_layout::TYPE_OPTION => {
                 let inner = type_args
                     .first()
                     .map(simple_resolve_type_expr)
                     .unwrap_or(Type::Unknown);
                 Type::Option(Box::new(inner))
             }
-            type_names::RESULT => {
+            type_layout::TYPE_RESULT => {
                 let ok = type_args
                     .first()
                     .map(simple_resolve_type_expr)

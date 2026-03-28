@@ -1,5 +1,4 @@
 use super::*;
-use super::{ERROR_FIELD, OK_FIELD, TAG_FIELD, VALUE_FIELD};
 
 const DEEP_EQUAL_FN: &str = "__floeEq";
 const THROW_NOT_IMPLEMENTED: &str = "(() => { throw new Error(\"not implemented\"); })()";

@@ -19,7 +19,7 @@ use crate::lexer::span::Span;
 use crate::parser::ast::*;
 use crate::resolve::ResolvedImports;
 use crate::stdlib::StdlibRegistry;
-use crate::type_names;
+use crate::type_layout;
 use types::{TypeEnv, TypeInfo};
 
 // ── Checker ──────────────────────────────────────────────────────
@@ -460,7 +460,7 @@ impl Checker {
             type_args: inner_args,
             ..
         } = &type_arg.kind
-            && name == type_names::OPTION
+            && name == type_layout::TYPE_OPTION
             && inner_args.len() == 1
         {
             let option_type = self.resolve_type(type_arg);
@@ -873,14 +873,14 @@ impl Checker {
         self.used_names.insert(root.to_string());
 
         match name {
-            type_names::NUMBER => Type::Number,
-            type_names::STRING => Type::String,
-            type_names::BOOLEAN => Type::Bool,
-            type_names::UNIT => Type::Unit,
-            type_names::UNDEFINED => Type::Undefined,
-            type_names::UNKNOWN => Type::Unknown,
-            type_names::ERROR | type_names::RESPONSE => Type::Named(name.to_string()),
-            type_names::RESULT => {
+            type_layout::TYPE_NUMBER => Type::Number,
+            type_layout::TYPE_STRING => Type::String,
+            type_layout::TYPE_BOOLEAN => Type::Bool,
+            type_layout::TYPE_UNIT => Type::Unit,
+            type_layout::TYPE_UNDEFINED => Type::Undefined,
+            type_layout::TYPE_UNKNOWN => Type::Unknown,
+            type_layout::TYPE_ERROR | type_layout::TYPE_RESPONSE => Type::Named(name.to_string()),
+            type_layout::TYPE_RESULT => {
                 let ok = type_args
                     .first()
                     .map(|t| self.resolve_type(t))
@@ -894,14 +894,14 @@ impl Checker {
                     err: Box::new(err),
                 }
             }
-            type_names::OPTION => {
+            type_layout::TYPE_OPTION => {
                 let inner = type_args
                     .first()
                     .map(|t| self.resolve_type(t))
                     .unwrap_or(Type::Unknown);
                 Type::Option(Box::new(inner))
             }
-            type_names::ARRAY => {
+            type_layout::TYPE_ARRAY => {
                 let inner = type_args
                     .first()
                     .map(|t| self.resolve_type(t))
@@ -1287,20 +1287,20 @@ impl Checker {
             let resolve_fn = |type_expr: &crate::parser::ast::TypeExpr| -> Type {
                 match &type_expr.kind {
                     crate::parser::ast::TypeExprKind::Named { name, .. } => match name.as_str() {
-                        type_names::NUMBER => Type::Number,
-                        type_names::STRING => Type::String,
-                        type_names::BOOLEAN => Type::Bool,
-                        type_names::UNIT => Type::Unit,
-                        type_names::UNDEFINED => Type::Undefined,
+                        type_layout::TYPE_NUMBER => Type::Number,
+                        type_layout::TYPE_STRING => Type::String,
+                        type_layout::TYPE_BOOLEAN => Type::Bool,
+                        type_layout::TYPE_UNIT => Type::Unit,
+                        type_layout::TYPE_UNDEFINED => Type::Undefined,
                         _ => Type::Named(name.to_string()),
                     },
                     crate::parser::ast::TypeExprKind::Array(inner) => {
                         let inner_resolved = match &inner.kind {
                             crate::parser::ast::TypeExprKind::Named { name, .. } => {
                                 match name.as_str() {
-                                    type_names::NUMBER => Type::Number,
-                                    type_names::STRING => Type::String,
-                                    type_names::BOOLEAN => Type::Bool,
+                                    type_layout::TYPE_NUMBER => Type::Number,
+                                    type_layout::TYPE_STRING => Type::String,
+                                    type_layout::TYPE_BOOLEAN => Type::Bool,
                                     _ => Type::Named(name.to_string()),
                                 }
                             }
