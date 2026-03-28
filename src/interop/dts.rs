@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Declaration, ExportNamedDeclaration, FormalParameters, PropertyKey, Statement,
-    TSModuleDeclarationBody, TSModuleDeclarationName, TSSignature, TSTupleElement,
-    TSType as OxcTSType, TSTypeName, VariableDeclarator,
+    TSModuleDeclarationBody, TSModuleDeclarationName, TSPropertySignature, TSSignature,
+    TSTupleElement, TSType as OxcTSType, TSTypeName, VariableDeclarator,
 };
 use oxc_parser::Parser;
 use oxc_span::SourceType;
@@ -250,24 +250,27 @@ fn convert_variable_declarator(declarator: &VariableDeclarator<'_>) -> Option<Dt
     Some(DtsExport { name, ts_type })
 }
 
+/// Convert a single TSPropertySignature to an ObjectField.
+fn convert_property_signature(prop: &TSPropertySignature<'_>) -> Option<ObjectField> {
+    let name = property_key_name(&prop.key)?;
+    let ty = prop
+        .type_annotation
+        .as_ref()
+        .map(|ta| convert_oxc_type(&ta.type_annotation))
+        .unwrap_or(TsType::Any);
+    Some(ObjectField {
+        name,
+        ty,
+        optional: prop.optional,
+    })
+}
+
 /// Convert interface body members to TsType::Object.
 fn convert_interface_body(members: &[TSSignature<'_>]) -> TsType {
     let fields: Vec<ObjectField> = members
         .iter()
         .filter_map(|sig| match sig {
-            TSSignature::TSPropertySignature(prop) => {
-                let name = property_key_name(&prop.key)?;
-                let ty = prop
-                    .type_annotation
-                    .as_ref()
-                    .map(|ta| convert_oxc_type(&ta.type_annotation))
-                    .unwrap_or(TsType::Any);
-                Some(ObjectField {
-                    name,
-                    ty,
-                    optional: prop.optional,
-                })
-            }
+            TSSignature::TSPropertySignature(prop) => convert_property_signature(prop),
             _ => None,
         })
         .collect();
@@ -362,19 +365,7 @@ fn convert_oxc_type(ty: &OxcTSType<'_>) -> TsType {
                 .members
                 .iter()
                 .filter_map(|sig| match sig {
-                    TSSignature::TSPropertySignature(prop) => {
-                        let name = property_key_name(&prop.key)?;
-                        let ty = prop
-                            .type_annotation
-                            .as_ref()
-                            .map(|ta| convert_oxc_type(&ta.type_annotation))
-                            .unwrap_or(TsType::Any);
-                        Some(ObjectField {
-                            name,
-                            ty,
-                            optional: prop.optional,
-                        })
-                    }
+                    TSSignature::TSPropertySignature(prop) => convert_property_signature(prop),
                     _ => None,
                 })
                 .collect();
@@ -527,19 +518,7 @@ fn convert_tuple_element(el: &TSTupleElement<'_>) -> TsType {
                 .members
                 .iter()
                 .filter_map(|sig| match sig {
-                    TSSignature::TSPropertySignature(prop) => {
-                        let name = property_key_name(&prop.key)?;
-                        let ty = prop
-                            .type_annotation
-                            .as_ref()
-                            .map(|ta| convert_oxc_type(&ta.type_annotation))
-                            .unwrap_or(TsType::Any);
-                        Some(ObjectField {
-                            name,
-                            ty,
-                            optional: prop.optional,
-                        })
-                    }
+                    TSSignature::TSPropertySignature(prop) => convert_property_signature(prop),
                     _ => None,
                 })
                 .collect();

@@ -8,6 +8,19 @@ pub struct ObjectField {
     pub optional: bool,
 }
 
+impl TsType {
+    /// Returns true if this type contains null or undefined (directly or in a union).
+    pub fn is_nullable(&self) -> bool {
+        match self {
+            TsType::Null | TsType::Undefined => true,
+            TsType::Union(parts) => parts
+                .iter()
+                .any(|p| matches!(p, TsType::Null | TsType::Undefined)),
+            _ => false,
+        }
+    }
+}
+
 /// A raw TypeScript type as parsed from .d.ts files, before boundary wrapping.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TsType {
