@@ -19,8 +19,11 @@ pub struct StdlibFn {
     /// Return type.
     pub return_type: Type,
     /// Codegen template. Placeholders: `$0` = first arg, `$1` = second arg, etc.
+    /// `$..` = all args comma-separated (for variadic functions).
     /// Example: `[...$0].sort((a, b) => a - b)` for Array.sort
     pub codegen: &'static str,
+    /// If true, accepts any number of arguments (e.g. `Console.log`).
+    pub is_variadic: bool,
 }
 
 /// Registry of all standard library functions.
@@ -110,6 +113,20 @@ macro_rules! stdlib_fn {
             params: vec![$($param),*],
             return_type: $ret,
             codegen: $codegen,
+            is_variadic: false,
+        }
+    };
+}
+
+macro_rules! stdlib_fn_variadic {
+    ($module:expr, $name:expr, $ret:expr, $codegen:expr) => {
+        StdlibFn {
+            module: $module,
+            name: $name,
+            params: vec![],
+            return_type: $ret,
+            codegen: $codegen,
+            is_variadic: true,
         }
     };
 }
@@ -191,11 +208,11 @@ fn build_stdlib() -> Vec<StdlibFn> {
         stdlib_fn!("Number", "toFixed", [Type::Number, Type::Number], Type::String, "$0.toFixed($1)"),
         stdlib_fn!("Number", "toString", [Type::Number], Type::String, "String($0)"),
         // ── Console ────────────────────────────────────────────
-        stdlib_fn!("Console", "log", [t.clone()], Type::Unit, "console.log($0)"),
-        stdlib_fn!("Console", "warn", [t.clone()], Type::Unit, "console.warn($0)"),
-        stdlib_fn!("Console", "error", [t.clone()], Type::Unit, "console.error($0)"),
-        stdlib_fn!("Console", "info", [t.clone()], Type::Unit, "console.info($0)"),
-        stdlib_fn!("Console", "debug", [t.clone()], Type::Unit, "console.debug($0)"),
+        stdlib_fn_variadic!("Console", "log", Type::Unit, "console.log($..)"),
+        stdlib_fn_variadic!("Console", "warn", Type::Unit, "console.warn($..)"),
+        stdlib_fn_variadic!("Console", "error", Type::Unit, "console.error($..)"),
+        stdlib_fn_variadic!("Console", "info", Type::Unit, "console.info($..)"),
+        stdlib_fn_variadic!("Console", "debug", Type::Unit, "console.debug($..)"),
         stdlib_fn!("Console", "time", [Type::String], Type::Unit, "console.time($0)"),
         stdlib_fn!("Console", "timeEnd", [Type::String], Type::Unit, "console.timeEnd($0)"),
         // ── Math ───────────────────────────────────────────────
@@ -645,7 +662,8 @@ mod tests {
     fn lookup_console_log() {
         let reg = StdlibRegistry::new();
         let f = reg.lookup("Console", "log").unwrap();
-        assert_eq!(f.codegen, "console.log($0)");
+        assert_eq!(f.codegen, "console.log($..)");
+        assert!(f.is_variadic);
     }
 
     #[test]
