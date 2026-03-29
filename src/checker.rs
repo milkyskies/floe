@@ -105,9 +105,9 @@ pub struct Checker {
     resolved_imports: HashMap<String, ResolvedImports>,
     /// Pre-resolved .d.ts exports for npm imports, keyed by specifier (e.g. "react").
     dts_imports: HashMap<String, Vec<DtsExport>>,
-    /// Counter for disambiguating probe lookups when the same binding name appears
-    /// multiple times (e.g. two `const { data } = ...` destructures).
-    probe_counters: HashSet<String>,
+    /// Tracks consumed probe export indices to prevent reuse.
+    /// Uses (specifier_index, export_index) pairs to identify specific exports.
+    probe_consumed: HashSet<(usize, usize)>,
     /// Maps variable/function names to their inferred type display names.
     /// Accumulated as names are defined so inner-scope names aren't lost.
     name_types: HashMap<String, String>,
@@ -288,7 +288,7 @@ impl Checker {
             registering_types: false,
             resolved_imports: HashMap::new(),
             dts_imports: HashMap::new(),
-            probe_counters: HashSet::new(),
+            probe_consumed: HashSet::new(),
             name_types: HashMap::new(),
             ambiguous_variants: HashMap::new(),
             fn_required_params: HashMap::new(),
@@ -1346,7 +1346,16 @@ impl Checker {
         {
             self.expr_types.insert(decl.value.id, declared.clone());
         }
-        let tsgo_type = self.find_and_consume_tsgo_probe(&decl.binding);
+        let tsgo_type = self.find_and_consume_tsgo_probe(&decl.binding).map(|ty| {
+            // The tsgo probe generates the raw call expression without `await`,
+            // so if the Floe code has `await`, unwrap Promise from the probe type.
+            if Self::expr_has_await(&decl.value)
+                && let Type::Promise(inner) = ty
+            {
+                return *inner;
+            }
+            ty
+        });
         let final_type = self.resolve_const_type(value_type, declared_type, &tsgo_type, span);
 
         match &decl.binding {
@@ -1390,28 +1399,29 @@ impl Checker {
         let probe_key = format!("__probe_{binding_name}");
         let probe_prefix = format!("__probe_{binding_name}_");
 
-        let mut found_export = None;
-        let mut found_inlined = None;
-        for exports in self.dts_imports.values() {
-            for export in exports {
-                if !self.probe_counters.contains(&export.name)
+        let mut found_export: Option<(usize, usize, DtsExport)> = None;
+        let mut found_inlined: Option<(usize, usize, DtsExport)> = None;
+        for (spec_idx, exports) in self.dts_imports.values().enumerate() {
+            for (exp_idx, export) in exports.iter().enumerate() {
+                let key = (spec_idx, exp_idx);
+                if !self.probe_consumed.contains(&key)
                     && (export.name == probe_key || export.name.starts_with(&probe_prefix))
                 {
                     if export.name.contains("inlined") {
                         if found_inlined.is_none() {
-                            found_inlined = Some(export.clone());
+                            found_inlined = Some((spec_idx, exp_idx, export.clone()));
                         }
                     } else if found_export.is_none() {
-                        found_export = Some(export.clone());
+                        found_export = Some((spec_idx, exp_idx, export.clone()));
                     }
                 }
             }
         }
-        let found_export = found_inlined.or(found_export);
-        if let Some(ref export) = found_export {
-            self.probe_counters.insert(export.name.clone());
+        let found = found_inlined.or(found_export);
+        if let Some((spec_idx, exp_idx, _)) = &found {
+            self.probe_consumed.insert((*spec_idx, *exp_idx));
         }
-        found_export.map(|e| interop::wrap_boundary_type(&e.ts_type))
+        found.map(|(_, _, e)| interop::wrap_boundary_type(&e.ts_type))
     }
 
     /// Determine the final type for a const binding given value type, declared type, and tsgo probe.
@@ -1458,6 +1468,15 @@ impl Checker {
         }
     }
 
+    /// Check if an expression is wrapped in `await` (possibly through `try`).
+    fn expr_has_await(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Await(_) => true,
+            ExprKind::Try(inner) => Self::expr_has_await(inner),
+            _ => false,
+        }
+    }
+
     /// Infer the type of an element from an array/tuple destructuring at a given index.
     fn array_element_type(effective_type: &Type, i: usize) -> Type {
         match effective_type {
@@ -1499,12 +1518,6 @@ impl Checker {
         has_tsgo: bool,
         span: Span,
     ) {
-        // If tsgo resolved this as a single-field destructure, assign directly
-        if has_tsgo && names.len() == 1 {
-            self.define_const_binding(&names[0], final_type.clone(), false, span);
-            return;
-        }
-
         let concrete = self
             .env
             .resolve_to_concrete(final_type, &expr::simple_resolve_type_expr);
@@ -1513,6 +1526,18 @@ impl Checker {
             Type::Record(fields) => Some(fields.iter().map(|(n, t)| (n.as_str(), t)).collect()),
             _ => None,
         };
+
+        // If tsgo resolved a single-field destructure and the type isn't a Record
+        // with that field, assign it directly (legacy behavior for field-level probes)
+        if has_tsgo
+            && names.len() == 1
+            && field_map
+                .as_ref()
+                .is_none_or(|m| !m.contains_key(names[0].as_str()))
+        {
+            self.define_const_binding(&names[0], final_type.clone(), false, span);
+            return;
+        }
 
         for name in names {
             let field_ty = field_map
