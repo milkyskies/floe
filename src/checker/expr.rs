@@ -544,15 +544,38 @@ impl Checker {
             && let ExprKind::Identifier(module) = &object.kind
             && let Some(stdlib_fn) = self.stdlib.lookup(module, field)
         {
-            self.unused.used_names.insert(module.clone());
             let ret = stdlib_fn.return_type.clone();
+            let expected_param_count = stdlib_fn.params.len();
+            let variadic = stdlib_fn.is_variadic();
+            let display = format!("{module}.{field}");
+            self.unused.used_names.insert(module.clone());
+
+            let mut arg_count = 0;
             for arg in args {
                 match arg {
                     Arg::Positional(e) | Arg::Named { value: e, .. } => {
                         self.check_expr(e);
+                        arg_count += 1;
                     }
                 }
             }
+
+            if !variadic && arg_count != expected_param_count {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        format!(
+                            "`{display}` expects {} argument{}, found {}",
+                            expected_param_count,
+                            if expected_param_count == 1 { "" } else { "s" },
+                            arg_count
+                        ),
+                        span,
+                    )
+                    .with_label("wrong number of arguments")
+                    .with_code("E001"),
+                );
+            }
+
             return ret;
         }
 
