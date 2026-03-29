@@ -380,11 +380,7 @@ fn generate_probe(
                         // For object destructuring, generate per-field exports so tsgo
                         // expands opaque named types through member access
                         if let ConstBinding::Object(names) = &decl.binding {
-                            let has_await = matches!(decl.value.kind, ExprKind::Await(_))
-                                || matches!(
-                                    &decl.value.kind,
-                                    ExprKind::Try(inner) if matches!(inner.kind, ExprKind::Await(_))
-                                );
+                            let has_await = crate::checker::expr_has_await(&decl.value);
                             let await_prefix = if has_await { "await " } else { "" };
                             lines.push(format!(
                                 "const _tmp_{inlined_id} = {await_prefix}{call_expr};"
