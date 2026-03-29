@@ -3747,3 +3747,15 @@ fn _test(b: B) -> number { b.x }",
         "record spread should allow accessing spread fields: {diags:?}"
     );
 }
+
+#[test]
+fn string_literal_type_arg() {
+    let diags = check(
+        "type A { x: number }
+type B = Array<\"div\">",
+    );
+    assert!(
+        diags.is_empty(),
+        "string literal type argument should parse and check: {diags:?}"
+    );
+}

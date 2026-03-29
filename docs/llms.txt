@@ -114,6 +114,11 @@ type OrderId { number }
 // String literal union (for npm interop)
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE"
 
+// String literal type arguments (for npm interop)
+// Used with React's ComponentProps, event emitters, etc.
+import trusted { ComponentProps } from "react"
+type DivProps = ComponentProps<"div">
+
 // Record type composition with spread
 type BaseProps {
     className: string,

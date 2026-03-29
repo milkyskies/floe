@@ -1024,6 +1024,7 @@ impl Checker {
                     first.unwrap_or_else(|| resolved.into_iter().next().unwrap_or(Type::Unknown))
                 }
             }
+            TypeExprKind::StringLiteral(value) => Type::Foreign(format!("\"{value}\"")),
             TypeExprKind::TypeOf(name) => {
                 let root = name.split('.').next().unwrap_or(name);
                 self.unused.used_names.insert(root.to_string());

@@ -178,6 +178,9 @@ Array<T>
 
 // Tuple
 (string, number)
+
+// String literal (for npm interop)
+ComponentProps<"div">
 ```
 
 ## Differences from TypeScript

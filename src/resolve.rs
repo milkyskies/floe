@@ -693,6 +693,7 @@ fn collect_type_names(type_expr: &TypeExpr, names: &mut HashSet<String>) {
                 collect_type_names(ty, names);
             }
         }
+        TypeExprKind::StringLiteral(_) => {}
     }
 }
 

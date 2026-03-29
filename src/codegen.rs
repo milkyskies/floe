@@ -1063,6 +1063,9 @@ impl Codegen {
                     self.emit_type_expr(ty);
                 }
             }
+            TypeExprKind::StringLiteral(value) => {
+                self.push(&format!("\"{value}\""));
+            }
         }
     }
 

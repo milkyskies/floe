@@ -486,6 +486,17 @@ impl Formatter<'_> {
             .filter(|c| c.kind() == SyntaxKind::TYPE_EXPR)
             .collect();
 
+        // String literal type: "div", "button"
+        let string_token = node.children_with_tokens().find_map(|t| {
+            t.as_token()
+                .filter(|tok| tok.kind() == SyntaxKind::STRING)
+                .map(|tok| tok.text().to_string())
+        });
+        if let Some(s) = string_token {
+            self.write(&s);
+            return;
+        }
+
         // Unit type: ()
         if has_lparen
             && idents.is_empty()

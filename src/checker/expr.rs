@@ -1766,6 +1766,7 @@ pub(crate) fn simple_resolve_type_expr(type_expr: &crate::parser::ast::TypeExpr)
             // Without environment context, typeof can't be resolved
             Type::Unknown
         }
+        TypeExprKind::StringLiteral(value) => Type::Foreign(format!("\"{value}\"")),
         TypeExprKind::Intersection(types) => {
             let resolved: Vec<Type> = types.iter().map(simple_resolve_type_expr).collect();
             let mut fields = Vec::new();
