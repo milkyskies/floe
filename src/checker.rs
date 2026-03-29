@@ -1128,6 +1128,83 @@ impl Checker {
         }
     }
 
+    /// Parse a type from a display name string (e.g. "Session | null" -> Option<Session>).
+    /// Used to reconstruct structured types from flattened Promise<T> inner strings.
+    fn parse_type_from_display_name(&self, s: &str) -> Type {
+        // Split at top-level " | " (respecting angle bracket depth)
+        let parts = Self::split_union_display_name(s);
+        if parts.len() > 1 {
+            let has_null = parts.iter().any(|p| *p == "null" || *p == "undefined");
+            let non_null: Vec<&str> = parts
+                .iter()
+                .filter(|p| **p != "null" && **p != "undefined")
+                .copied()
+                .collect();
+
+            let inner = if non_null.len() == 1 {
+                self.parse_type_from_display_name(non_null[0])
+            } else if non_null.is_empty() {
+                Type::Unit
+            } else {
+                Type::Unknown
+            };
+
+            return if has_null {
+                Type::Option(Box::new(inner))
+            } else {
+                inner
+            };
+        }
+
+        // Primitives
+        match s {
+            "number" => Type::Number,
+            "string" => Type::String,
+            "boolean" => Type::Bool,
+            "void" => Type::Unit,
+            "unknown" => Type::Unknown,
+            "null" | "undefined" => Type::Undefined,
+            _ => {
+                // Check for Array<T>
+                if let Some(inner) = s.strip_prefix("Array<").and_then(|s| s.strip_suffix('>')) {
+                    return Type::Array(Box::new(self.parse_type_from_display_name(inner)));
+                }
+                // Named type (foreign or local)
+                Type::Named(s.to_string())
+            }
+        }
+    }
+
+    /// Split a type display name at top-level ` | ` delimiters,
+    /// respecting `<>` nesting so `Map<A | B, C> | null` splits correctly.
+    fn split_union_display_name(s: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut depth = 0i32;
+        let mut start = 0;
+        let bytes = s.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+        while i < len {
+            match bytes[i] {
+                b'<' | b'(' => depth += 1,
+                b'>' | b')' => depth -= 1,
+                b'|' if depth == 0
+                    && i > 0
+                    && bytes[i - 1] == b' '
+                    && i + 1 < len
+                    && bytes[i + 1] == b' ' =>
+                {
+                    parts.push(s[start..i - 1].trim());
+                    start = i + 2;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        parts.push(s[start..].trim());
+        parts
+    }
+
     // ── Item Checking ────────────────────────────────────────────
 
     fn check_item(&mut self, item: &Item) {
