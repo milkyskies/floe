@@ -737,6 +737,7 @@ fn collect_typeof_names(type_expr: &TypeExpr, callback: &mut dyn FnMut(&str)) {
                 collect_typeof_names(&f.type_ann, callback);
             }
         }
+        TypeExprKind::StringLiteral(_) => {}
     }
 }
 
@@ -778,6 +779,7 @@ fn type_expr_references_imports(
         TypeExprKind::Record(fields) => fields
             .iter()
             .any(|f| type_expr_references_imports(&f.type_ann, imported_names)),
+        TypeExprKind::StringLiteral(_) => false,
     }
 }
 
@@ -1097,6 +1099,7 @@ fn type_expr_to_ts(ty: &TypeExpr) -> String {
             let parts: Vec<String> = types.iter().map(type_expr_to_ts).collect();
             parts.join(" & ")
         }
+        TypeExprKind::StringLiteral(value) => format!("\"{value}\""),
     }
 }
 

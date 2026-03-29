@@ -1842,3 +1842,12 @@ type B {
         "record spread should emit as intersection, got: {result}"
     );
 }
+
+#[test]
+fn string_literal_type_arg() {
+    let result = emit("type A = Array<\"div\">");
+    assert!(
+        result.contains("type A = Array<\"div\">;"),
+        "should emit string literal type arg, got: {result}"
+    );
+}

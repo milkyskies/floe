@@ -983,6 +983,18 @@ impl<'src> Lowerer<'src> {
             });
         }
 
+        let string_lit = node.children_with_tokens().find_map(|t| {
+            t.as_token()
+                .filter(|tok| tok.kind() == SyntaxKind::STRING)
+                .map(|tok| self.unquote_string(tok.text()))
+        });
+        if let Some(value) = string_lit {
+            return Some(TypeExpr {
+                kind: TypeExprKind::StringLiteral(value),
+                span,
+            });
+        }
+
         // Named type with optional type args
         if !idents.is_empty() {
             // Join dotted names

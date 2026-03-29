@@ -343,6 +343,8 @@ pub enum TypeExprKind {
     TypeOf(String),
     /// `A & B` — intersection type
     Intersection(Vec<TypeExpr>),
+    /// String literal type: `"div"`, `"button"` (for npm interop like `ComponentProps<"div">`)
+    StringLiteral(String),
 }
 
 // ── Expressions ──────────────────────────────────────────────────

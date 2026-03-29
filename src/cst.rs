@@ -909,6 +909,10 @@ impl<'src> CstParser<'src> {
         else if self.at(TokenKind::LeftBrace) {
             self.parse_record_fields();
         }
+        // String literal type (e.g. ComponentProps<"div">)
+        else if self.at(TokenKind::String("".into())) {
+            self.bump();
+        }
         // typeof <ident> or typeof Module.value
         else if self.at(TokenKind::Typeof) {
             self.bump();

@@ -649,5 +649,6 @@ pub(super) fn type_expr_to_string(ty: &TypeExpr) -> String {
             let parts: Vec<String> = types.iter().map(type_expr_to_string).collect();
             parts.join(" & ")
         }
+        TypeExprKind::StringLiteral(value) => format!("\"{value}\""),
     }
 }

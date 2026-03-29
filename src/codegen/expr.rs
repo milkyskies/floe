@@ -878,11 +878,12 @@ impl Codegen {
                 self.emit_parse_checks(&elem_accessor, inner, &elem_path);
                 self.push("} ");
             }
-            TypeExprKind::Function { .. }
+            TypeExprKind::StringLiteral(_)
+            | TypeExprKind::Function { .. }
             | TypeExprKind::Tuple(_)
             | TypeExprKind::TypeOf(_)
             | TypeExprKind::Intersection(_) => {
-                // Can't validate functions, tuples, typeof, or intersections at runtime — skip
+                // Can't validate string literals, functions, tuples, typeof, or intersections at runtime — skip
             }
         }
     }
@@ -1004,6 +1005,9 @@ impl Codegen {
                     self.emit_mock_for_type(ty, &[], counter, "");
                 }
                 self.push("]");
+            }
+            TypeExprKind::StringLiteral(value) => {
+                self.push(&format!("\"{value}\""));
             }
             TypeExprKind::Function { .. }
             | TypeExprKind::TypeOf(_)
