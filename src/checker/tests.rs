@@ -3426,18 +3426,19 @@ for AccentRow {
 }
 "#,
     );
-    // With no import resolution, AccentRow is unknown.
-    // self.id and self.entryId should error because we can't validate them.
+    // With no import resolution, AccentRow is a foreign Named type.
+    // Member access on foreign types is allowed (returns unknown) since
+    // we can't validate fields but TypeScript would have checked them.
     let errors: Vec<_> = diags
         .iter()
         .filter(|d| d.severity == Severity::Error)
         .map(|d| format!("{}: {}", d.code.as_deref().unwrap_or(""), d.message))
         .collect();
     assert!(
-        errors
+        !errors
             .iter()
-            .any(|e| e.contains("E020") || e.contains("cannot access")),
-        "field access on unresolved imported type should error, got: {:?}",
+            .any(|e| e.contains("E020") && e.contains("AccentRow")),
+        "foreign type member access should not error, got: {:?}",
         errors
     );
 }

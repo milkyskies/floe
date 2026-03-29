@@ -312,11 +312,11 @@ impl Checker {
                 let ty = self.check_expr(inner);
                 // Unwrap Promise<T> to T
                 if let Type::Named(name) = &ty
-                    && let Some(inner_name) = name
+                    && let Some(inner_str) = name
                         .strip_prefix("Promise<")
                         .and_then(|s| s.strip_suffix('>'))
                 {
-                    return self.resolve_named_type(inner_name, &[], expr.span);
+                    return self.parse_type_from_display_name(inner_str);
                 }
                 // If not a Promise, pass through (e.g. await on a non-async value)
                 ty
@@ -1628,10 +1628,13 @@ impl Checker {
             _ => {}
         }
 
-        // Named type that couldn't be resolved to a concrete type definition.
-        // This happens when an imported type has no .d.ts resolution — field access
-        // cannot be validated, so we error rather than silently accepting any field.
+        // Named type without a local type definition is foreign (from npm).
+        // Allow member access silently — we can't validate fields but
+        // TypeScript already checked them at the source.
         if let Type::Named(name) = obj_ty {
+            if self.env.lookup_type(name).is_none() {
+                return Type::Unknown;
+            }
             self.diagnostics.push(
                 Diagnostic::error(
                     format!("cannot access `.{field}` on unresolved type `{name}`"),
