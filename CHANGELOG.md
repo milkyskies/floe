@@ -5,6 +5,19 @@ All notable changes to Floe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.17](https://github.com/milkyskies/floe/compare/v0.1.16...v0.1.17) (2026-03-29)
+
+
+### Features
+
+* [[#543](https://github.com/milkyskies/floe/issues/543)] Add intersection type syntax (A & B) ([#569](https://github.com/milkyskies/floe/issues/569)) ([66be2b7](https://github.com/milkyskies/floe/commit/66be2b75b9bd8b57008bf3931f9abe72f4a0964a))
+
+
+### Bug Fixes
+
+* [[#562](https://github.com/milkyskies/floe/issues/562)] Allow concrete values to be assignable to Option&lt;T&gt; ([#570](https://github.com/milkyskies/floe/issues/570)) ([22c23fe](https://github.com/milkyskies/floe/commit/22c23fe9d532139c800ab5801776f4a737757241))
+* [[#564](https://github.com/milkyskies/floe/issues/564)] Forward tsconfig paths to probe and parse JSONC tsconfig files ([#573](https://github.com/milkyskies/floe/issues/573)) ([4f1185f](https://github.com/milkyskies/floe/commit/4f1185f9227fa5a4669bbf148890cb45905a3301))
+
 ## [0.1.16](https://github.com/milkyskies/floe/compare/v0.1.15...v0.1.16) (2026-03-29)
 
 
