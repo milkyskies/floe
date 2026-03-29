@@ -843,7 +843,10 @@ impl Checker {
                 // No type annotations to validate
             }
             TypeDef::Alias(type_expr) => {
-                self.resolve_type(type_expr);
+                let ty = self.resolve_type(type_expr);
+                // Re-register: during the first pass, typeof expressions resolve
+                // to Unknown because value bindings aren't registered yet.
+                self.env.define(&decl.name, ty);
             }
         }
 
@@ -955,6 +958,33 @@ impl Checker {
             TypeExprKind::Array(inner) => Type::Array(Box::new(self.resolve_type(inner))),
             TypeExprKind::Tuple(types) => {
                 Type::Tuple(types.iter().map(|t| self.resolve_type(t)).collect())
+            }
+            TypeExprKind::TypeOf(name) => {
+                // Mark the name as used
+                let root = name.split('.').next().unwrap_or(name);
+                self.unused.used_names.insert(root.to_string());
+
+                // During type registration, the referenced binding may not exist yet.
+                // Defer resolution — the alias will be re-resolved during the second pass.
+                if self.registering_types {
+                    return Type::Unknown;
+                }
+
+                // Look up the binding's type in the environment
+                if let Some(ty) = self.env.lookup(name) {
+                    ty.clone()
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            format!("cannot use `typeof` on undefined binding `{name}`"),
+                            type_expr.span,
+                        )
+                        .with_label("not defined")
+                        .with_help("typeof can only be used with value bindings (const, fn)")
+                        .with_code("E002"),
+                    );
+                    Type::Unknown
+                }
             }
         }
     }

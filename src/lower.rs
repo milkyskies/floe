@@ -874,6 +874,16 @@ impl<'src> Lowerer<'src> {
             });
         }
 
+        // typeof <ident>
+        let has_typeof = self.has_token(node, SyntaxKind::KW_TYPEOF);
+        if has_typeof && !idents.is_empty() {
+            let name = idents.join(".");
+            return Some(TypeExpr {
+                kind: TypeExprKind::TypeOf(name),
+                span,
+            });
+        }
+
         // Named type with optional type args
         if !idents.is_empty() {
             // Join dotted names
