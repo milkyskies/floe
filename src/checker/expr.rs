@@ -284,7 +284,7 @@ impl Checker {
                     self.env.pop_scope();
 
                     if let Some(ref first_type) = result_type {
-                        if !self.types_compatible(first_type, &arm_type)
+                        if !self.types_unifiable(first_type, &arm_type)
                             && !matches!(arm_type, Type::Unknown | Type::Var(_))
                             && !matches!(first_type, Type::Unknown | Type::Var(_))
                         {
@@ -301,6 +301,7 @@ impl Checker {
                                 .with_code("E001"),
                             );
                         }
+                        result_type = Some(Self::merge_types(first_type, &arm_type));
                     } else {
                         result_type = Some(arm_type);
                     }

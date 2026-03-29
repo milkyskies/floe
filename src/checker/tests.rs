@@ -1225,6 +1225,52 @@ const _y = match x {
     );
 }
 
+#[test]
+fn match_arms_unify_result_with_unknown_params() {
+    let diags = check(
+        r#"
+type MyError { message: string }
+fn fallible(x: number) -> Result<string, MyError> {
+    match x {
+        0 -> Err(MyError(message: "zero")),
+        _ -> Ok("ok"),
+    }
+}
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "match arms have incompatible types"),
+        "Result<unknown, MyError> should unify with Result<string, unknown>, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+    assert!(
+        !has_error_containing(&diags, "expected return type"),
+        "merged Result should match declared return type, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn match_arms_truly_incompatible_result_still_errors() {
+    let diags = check(
+        r#"
+type E1 { a: string }
+type E2 { b: number }
+fn test(x: number) -> Result<string, E1> {
+    match x {
+        0 -> Err(E1(a: "x")),
+        _ -> Err(E2(b: 1)),
+    }
+}
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "match arms have incompatible types"),
+        "truly incompatible Result types should still error, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
 // ── 5. If/else is banned (parse-level) ────────────────────
 
 #[test]
@@ -2083,6 +2129,59 @@ fn fetch_with_try_is_ok() {
     assert!(
         !has_error(&diags, "E014"),
         "calling fetch with try should be fine"
+    );
+}
+
+// ── Async function return types ────────────────────────────
+
+#[test]
+fn async_fn_promise_return_type_matches_body() {
+    let diags = check(
+        r#"
+export async fn getName() -> Promise<string> {
+    "hello"
+}
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "expected return type"),
+        "async fn body string should match Promise<string>, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn async_fn_promise_option_return_type_matches() {
+    let diags = check(
+        r#"
+export async fn maybeGet(x: number) -> Promise<Option<string>> {
+    match x {
+        0 -> None,
+        _ -> Some("found"),
+    }
+}
+"#,
+    );
+    assert!(
+        !has_error_containing(&diags, "expected return type"),
+        "async fn body Option<string> should match Promise<Option<string>>, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn async_fn_promise_mismatch_still_errors() {
+    let diags = check(
+        r#"
+export async fn bad() -> Promise<string> {
+    42
+}
+"#,
+    );
+    assert!(
+        has_error_containing(&diags, "expected return type"),
+        "async fn body number should not match Promise<string>, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
 

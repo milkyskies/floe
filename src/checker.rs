@@ -79,6 +79,15 @@ pub(crate) struct TraitRegistry {
     pub trait_impls: HashSet<(String, String)>,
 }
 
+/// Check if an expression is wrapped in `await` (possibly through `try`).
+pub fn expr_has_await(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Await(_) => true,
+        ExprKind::Try(inner) => expr_has_await(inner),
+        _ => false,
+    }
+}
+
 // ── Checker ──────────────────────────────────────────────────────
 
 /// The Floe type checker.
@@ -105,9 +114,10 @@ pub struct Checker {
     resolved_imports: HashMap<String, ResolvedImports>,
     /// Pre-resolved .d.ts exports for npm imports, keyed by specifier (e.g. "react").
     dts_imports: HashMap<String, Vec<DtsExport>>,
-    /// Tracks consumed probe export indices to prevent reuse.
-    /// Uses (specifier_index, export_index) pairs to identify specific exports.
-    probe_consumed: HashSet<(usize, usize)>,
+    /// Tracks consumed probe exports to prevent reuse.
+    /// Uses (specifier_name, export_index) pairs for stable identification
+    /// across HashMap iteration orders.
+    probe_consumed: HashSet<(String, usize)>,
     /// Maps variable/function names to their inferred type display names.
     /// Accumulated as names are defined so inner-scope names aren't lost.
     name_types: HashMap<String, String>,
@@ -1395,6 +1405,43 @@ impl Checker {
         }
     }
 
+    /// Find, consume, and return a probe export matching the predicate.
+    /// Prefer "inlined" variants when `prefer_inlined` is true.
+    fn consume_probe(
+        &mut self,
+        predicate: impl Fn(&str) -> bool,
+        prefer_inlined: bool,
+    ) -> Option<Type> {
+        let mut found: Option<(String, usize, DtsExport)> = None;
+        let mut found_inlined: Option<(String, usize, DtsExport)> = None;
+        'outer: for (spec, exports) in &self.dts_imports {
+            for (exp_idx, export) in exports.iter().enumerate() {
+                let key = (spec.clone(), exp_idx);
+                if self.probe_consumed.contains(&key) || !predicate(&export.name) {
+                    continue;
+                }
+                if prefer_inlined && export.name.contains("inlined") {
+                    found_inlined = Some((spec.clone(), exp_idx, export.clone()));
+                    break 'outer;
+                } else if found.is_none() {
+                    found = Some((spec.clone(), exp_idx, export.clone()));
+                    if !prefer_inlined {
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let result = if prefer_inlined {
+            found_inlined.or(found)
+        } else {
+            found
+        };
+        if let Some((spec, exp_idx, _)) = &result {
+            self.probe_consumed.insert((spec.clone(), *exp_idx));
+        }
+        result.map(|(_, _, e)| interop::wrap_boundary_type(&e.ts_type))
+    }
+
     /// Search dts_imports for a tsgo probe matching the binding name, consume it, and return its type.
     fn find_and_consume_tsgo_probe(&mut self, binding: &ConstBinding) -> Option<Type> {
         let binding_name = match binding {
@@ -1405,51 +1452,16 @@ impl Checker {
         };
         let probe_key = format!("__probe_{binding_name}");
         let probe_prefix = format!("__probe_{binding_name}_");
-
-        let mut found_export: Option<(usize, usize, DtsExport)> = None;
-        let mut found_inlined: Option<(usize, usize, DtsExport)> = None;
-        for (spec_idx, exports) in self.dts_imports.values().enumerate() {
-            for (exp_idx, export) in exports.iter().enumerate() {
-                let key = (spec_idx, exp_idx);
-                if !self.probe_consumed.contains(&key)
-                    && (export.name == probe_key || export.name.starts_with(&probe_prefix))
-                {
-                    if export.name.contains("inlined") {
-                        if found_inlined.is_none() {
-                            found_inlined = Some((spec_idx, exp_idx, export.clone()));
-                        }
-                    } else if found_export.is_none() {
-                        found_export = Some((spec_idx, exp_idx, export.clone()));
-                    }
-                }
-            }
-        }
-        let found = found_inlined.or(found_export);
-        if let Some((spec_idx, exp_idx, _)) = &found {
-            self.probe_consumed.insert((*spec_idx, *exp_idx));
-        }
-        found.map(|(_, _, e)| interop::wrap_boundary_type(&e.ts_type))
+        self.consume_probe(
+            |name| name == probe_key || name.starts_with(&probe_prefix),
+            true,
+        )
     }
 
     /// Search for a per-field inlined probe (e.g. `__probe_data_inlined_N` for field `data`).
     fn find_per_field_probe(&mut self, field_name: &str) -> Option<Type> {
         let prefix = format!("__probe_{field_name}_inlined_");
-        let mut found: Option<(usize, usize, DtsExport)> = None;
-        for (spec_idx, exports) in self.dts_imports.values().enumerate() {
-            for (exp_idx, export) in exports.iter().enumerate() {
-                let key = (spec_idx, exp_idx);
-                if !self.probe_consumed.contains(&key)
-                    && export.name.starts_with(&prefix)
-                    && found.is_none()
-                {
-                    found = Some((spec_idx, exp_idx, export.clone()));
-                }
-            }
-        }
-        if let Some((spec_idx, exp_idx, _)) = &found {
-            self.probe_consumed.insert((*spec_idx, *exp_idx));
-        }
-        found.map(|(_, _, e)| interop::wrap_boundary_type(&e.ts_type))
+        self.consume_probe(|name| name.starts_with(&prefix), false)
     }
 
     /// Determine the final type for a const binding given value type, declared type, and tsgo probe.
@@ -1498,11 +1510,7 @@ impl Checker {
 
     /// Check if an expression is wrapped in `await` (possibly through `try`).
     fn expr_has_await(expr: &Expr) -> bool {
-        match &expr.kind {
-            ExprKind::Await(_) => true,
-            ExprKind::Try(inner) => Self::expr_has_await(inner),
-            _ => false,
-        }
+        expr_has_await(expr)
     }
 
     /// Infer the type of an element from an array/tuple destructuring at a given index.
@@ -1704,16 +1712,11 @@ impl Checker {
         // Check return type compatibility
         if let Some(ref declared_return) = decl.return_type {
             let resolved = self.resolve_type(declared_return);
-            // For async functions, unwrap Promise from the declared type before comparing,
-            // since the body type is the inner value (async implicitly wraps in Promise)
-            let effective_declared = if decl.async_fn {
-                if let Type::Promise(inner) = &resolved {
-                    inner.as_ref().clone()
-                } else {
-                    resolved.clone()
-                }
-            } else {
-                resolved.clone()
+            // For async functions, unwrap Promise from the declared type since
+            // the body type is the unwrapped inner value
+            let effective_declared = match (&resolved, decl.async_fn) {
+                (Type::Promise(inner), true) => inner.as_ref().clone(),
+                _ => resolved.clone(),
             };
             if !self.types_compatible(&effective_declared, &body_type)
                 && !matches!(body_type, Type::Var(_))
@@ -2114,6 +2117,63 @@ impl Checker {
             }
         } else {
             None
+        }
+    }
+
+    /// Like `types_compatible` but treats `unknown` as a wildcard on BOTH sides.
+    /// Used for match arm unification where `Result<unknown, E>` should unify
+    /// with `Result<T, unknown>`.
+    fn types_unifiable(&self, a: &Type, b: &Type) -> bool {
+        if matches!(a, Type::Unknown | Type::Var(_)) || matches!(b, Type::Unknown | Type::Var(_)) {
+            return true;
+        }
+        match (a, b) {
+            (Type::Result { ok: o1, err: e1 }, Type::Result { ok: o2, err: e2 }) => {
+                self.types_unifiable(o1, o2) && self.types_unifiable(e1, e2)
+            }
+            (Type::Option(a), Type::Option(b)) => self.types_unifiable(a, b),
+            (Type::Promise(a), Type::Promise(b)) => self.types_unifiable(a, b),
+            (Type::Array(a), Type::Array(b)) => self.types_unifiable(a, b),
+            (Type::Tuple(a), Type::Tuple(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| self.types_unifiable(x, y))
+            }
+            _ => self.types_compatible(a, b),
+        }
+    }
+
+    /// Merge two types by filling `unknown` holes from the other side.
+    /// `Result<unknown, AuthError>` + `Result<Option<Session>, unknown>` →
+    /// `Result<Option<Session>, AuthError>`
+    fn merge_types(a: &Type, b: &Type) -> Type {
+        match (a, b) {
+            (Type::Unknown, _) => b.clone(),
+            (_, Type::Unknown) => a.clone(),
+            (Type::Result { ok: o1, err: e1 }, Type::Result { ok: o2, err: e2 }) => Type::Result {
+                ok: Box::new(Self::merge_types(o1, o2)),
+                err: Box::new(Self::merge_types(e1, e2)),
+            },
+            (Type::Option(a_inner), Type::Option(b_inner)) => {
+                Type::Option(Box::new(Self::merge_types(a_inner, b_inner)))
+            }
+            (Type::Promise(a_inner), Type::Promise(b_inner)) => {
+                Type::Promise(Box::new(Self::merge_types(a_inner, b_inner)))
+            }
+            (Type::Array(a_inner), Type::Array(b_inner)) => {
+                Type::Array(Box::new(Self::merge_types(a_inner, b_inner)))
+            }
+            (Type::Tuple(a_elems), Type::Tuple(b_elems)) if a_elems.len() == b_elems.len() => {
+                Type::Tuple(
+                    a_elems
+                        .iter()
+                        .zip(b_elems.iter())
+                        .map(|(x, y)| Self::merge_types(x, y))
+                        .collect(),
+                )
+            }
+            _ => a.clone(),
         }
     }
 
