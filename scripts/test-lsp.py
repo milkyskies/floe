@@ -148,9 +148,28 @@ class LspClient:
             time.sleep(0.05)
         return None
 
-    def collect_notifications(self, method: str, timeout: float = 2.0) -> list[dict]:
-        """Collect all notifications of a given method within timeout."""
-        time.sleep(timeout)
+    def collect_notifications(self, method: str, timeout: float = 2.0, settle: float = 0.1) -> list[dict]:
+        """Collect all notifications of a given method, returning early once settled.
+
+        Polls every 50ms. Once at least one matching notification is found,
+        waits an additional `settle` period for more, then returns. If nothing
+        arrives within `timeout`, returns an empty list.
+        """
+        deadline = time.time() + timeout
+        found_any = False
+        settle_deadline = None
+        while True:
+            now = time.time()
+            with self._lock:
+                matches = [n for n in self.notifications if n.get("method") == method]
+            if matches and not found_any:
+                found_any = True
+                settle_deadline = now + settle
+            if found_any and now >= settle_deadline:
+                break
+            if now >= deadline:
+                break
+            time.sleep(0.05)
         with self._lock:
             result = [n for n in self.notifications if n.get("method") == method]
             self.notifications = [n for n in self.notifications if n.get("method") != method]
