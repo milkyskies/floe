@@ -5,6 +5,26 @@ All notable changes to Floe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.20](https://github.com/milkyskies/floe/compare/v0.1.19...v0.1.20) (2026-03-29)
+
+
+### Features
+
+* [[#616](https://github.com/milkyskies/floe/issues/616)] Support string literal type arguments ([#634](https://github.com/milkyskies/floe/issues/634)) ([f21a977](https://github.com/milkyskies/floe/commit/f21a977e0c3106bb7277fa3ae60087b0a424c8a7))
+* [[#618](https://github.com/milkyskies/floe/issues/618)] Record spread with generic types and formatter fixes ([#628](https://github.com/milkyskies/floe/issues/628)) ([9e3db72](https://github.com/milkyskies/floe/commit/9e3db72a3c51cb607cf6a6663e9b491b593a812e))
+
+
+### Bug Fixes
+
+* [[#592](https://github.com/milkyskies/floe/issues/592)] Prevent tsgo probe from emitting stray .d.ts files ([#609](https://github.com/milkyskies/floe/issues/609)) ([fc96cf8](https://github.com/milkyskies/floe/commit/fc96cf831d7d990ca17756208a917243b2a7445e))
+* [[#612](https://github.com/milkyskies/floe/issues/612)] Probe inlining drops intermediate member access in chained calls ([#613](https://github.com/milkyskies/floe/issues/613)) ([cb79b72](https://github.com/milkyskies/floe/commit/cb79b72db4c7d4e4a2eb019ff912fc6ac18ab328))
+* [[#614](https://github.com/milkyskies/floe/issues/614)] Use inlined probe results for destructured const bindings ([#620](https://github.com/milkyskies/floe/issues/620)) ([b84512b](https://github.com/milkyskies/floe/commit/b84512b4e963ccedd35d255a3f247a0399c7f955))
+* [[#615](https://github.com/milkyskies/floe/issues/615)] Intersection type fails after generic type application ([#619](https://github.com/milkyskies/floe/issues/619)) ([1b8e7f0](https://github.com/milkyskies/floe/commit/1b8e7f0b2bfef3d20532e4def11319013a8b3e43))
+* [[#621](https://github.com/milkyskies/floe/issues/621)] Probe counter blocks reuse of same-named probes across functions ([#622](https://github.com/milkyskies/floe/issues/622)) ([e848ed1](https://github.com/milkyskies/floe/commit/e848ed1552981339cc707a25a95b186e1255c39b))
+* [[#623](https://github.com/milkyskies/floe/issues/623)] Async fn return type check does not unwrap Promise ([#626](https://github.com/milkyskies/floe/issues/626)) ([afb4776](https://github.com/milkyskies/floe/commit/afb47765625b417ccd9f8495a08b1e1e9ae7eac4))
+* [[#624](https://github.com/milkyskies/floe/issues/624)] Expand opaque named types via per-field probe destructuring ([#627](https://github.com/milkyskies/floe/issues/627)) ([e9f9c81](https://github.com/milkyskies/floe/commit/e9f9c81178f5572dfb9584ab35ab76438f50a063))
+* [[#629](https://github.com/milkyskies/floe/issues/629)] Unify Result types with unknown params across match arms ([#633](https://github.com/milkyskies/floe/issues/633)) ([f90b284](https://github.com/milkyskies/floe/commit/f90b284fdb86d9b8f8a8dcd119fcb138fb6064c8))
+
 ## [0.1.19](https://github.com/milkyskies/floe/compare/v0.1.18...v0.1.19) (2026-03-29)
 
 
