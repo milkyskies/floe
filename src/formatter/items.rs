@@ -441,7 +441,13 @@ impl Formatter<'_> {
 
     fn fmt_record_spread(&mut self, node: &SyntaxNode) {
         self.write("...");
-        if let Some(name) = self.first_ident(node) {
+        // Look for a TYPE_EXPR child (generic types like Foo<Bar>)
+        if let Some(type_expr) = node
+            .children()
+            .find(|c| c.kind() == SyntaxKind::TYPE_EXPR.into())
+        {
+            self.fmt_type_expr(&type_expr);
+        } else if let Some(name) = self.first_ident(node) {
             self.write(&name);
         }
     }
