@@ -5,6 +5,13 @@ All notable changes to Floe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.22](https://github.com/milkyskies/floe/compare/v0.1.21...v0.1.22) (2026-03-29)
+
+
+### Bug Fixes
+
+* [[#639](https://github.com/milkyskies/floe/issues/639)] Cross-file import loses npm types referenced in function signatures ([#642](https://github.com/milkyskies/floe/issues/642)) ([64b58b1](https://github.com/milkyskies/floe/commit/64b58b18d2e8c1ec67034c3d6607d0c1de171af4))
+
 ## [0.1.21](https://github.com/milkyskies/floe/compare/v0.1.20...v0.1.21) (2026-03-29)
 
 
