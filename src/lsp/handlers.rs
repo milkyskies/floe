@@ -6,8 +6,10 @@ use tower_lsp::lsp_types::*;
 
 use crate::stdlib::StdlibRegistry;
 
-use super::completion::is_pipe_context;
-use super::completion::resolve_piped_type;
+use super::completion::{
+    dot_access_completions, dot_access_prefix, import_path_completions, is_in_comment,
+    is_in_import_string, is_in_string_literal, is_pipe_context, resolve_piped_type,
+};
 use super::stdlib_hover;
 use super::symbols::symbol_kind_to_completion;
 use super::{
@@ -256,6 +258,34 @@ impl LanguageServer for FloeLsp {
 
         let offset = position_to_offset(&doc.content, position);
         let prefix = word_prefix_at_offset(&doc.content, offset);
+
+        // ── Context suppression: no completions in comments or non-import strings ──
+        if is_in_comment(&doc.content, offset) {
+            return Ok(Some(CompletionResponse::Array(Vec::new())));
+        }
+
+        // ── Import path completions ─────────────────────────────
+        if is_in_import_string(&doc.content, offset) {
+            let items = import_path_completions(&uri, &doc.content, offset);
+            return Ok(Some(CompletionResponse::Array(items)));
+        }
+
+        // Suppress completions inside non-import string literals
+        if is_in_string_literal(&doc.content, offset) {
+            return Ok(Some(CompletionResponse::Array(Vec::new())));
+        }
+
+        // ── Dot-access field completions ────────────────────────
+        if let Some(obj_name) = dot_access_prefix(&doc.content, offset) {
+            // Skip stdlib modules — handled below
+            let registry = StdlibRegistry::new();
+            if !registry.is_module(&obj_name) {
+                let items = dot_access_completions(&obj_name, &prefix, &doc.type_map, &doc.index);
+                if !items.is_empty() {
+                    return Ok(Some(CompletionResponse::Array(items)));
+                }
+            }
+        }
 
         // ── Stdlib module method completions (Array., String., etc.) ──
         if let Some(module_name) = stdlib_module_prefix(&doc.content, offset) {
